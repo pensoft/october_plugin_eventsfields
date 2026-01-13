@@ -1,0 +1,6 @@
+plugin:
+    name: 'pensoft.eventsfields::lang.plugin.name'
+    description: 'pensoft.eventsfields::lang.plugin.description'
+    author: Pensoft
+    icon: oc-icon-adn
+    homepage: ''
