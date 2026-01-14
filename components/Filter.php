@@ -34,9 +34,10 @@ class Filter extends ComponentBase
         $sortTheme = post('sortTheme');
         $dateFrom = post('dateFrom');
         $dateTo = post('dateTo');
-        $this->page['records'] = $this->searchRecords($searchTerms, $sortCategory, $sortCountry, $sortTarget, $sortTheme, $dateFrom, $dateTo);
+        $page = post('page', 1);
+        $this->page['records'] = $this->searchRecords($searchTerms, $sortCategory, $sortCountry, $sortTarget, $sortTheme, $dateFrom, $dateTo, $page);
         $this->page['currentLang'] = $currentLang;
-        return ['#recordsContainer' => $this->renderPartial('eventslist')];
+        return ['#recordsContainer' => $this->renderPartial('events-short-term')];
     }
 
     protected function searchRecords(
@@ -46,7 +47,8 @@ class Filter extends ComponentBase
         $sortTarget = 0,
         $sortTheme = 0,
         $dateFrom = '',
-        $dateTo = ''
+        $dateTo = '',
+        $page = 1
     ) {
         $searchTerms = is_string($searchTerms) ? json_decode($searchTerms, true) : (array)$searchTerms;
         $result = Entry::searchEvents($searchTerms);
@@ -75,7 +77,8 @@ class Filter extends ComponentBase
             $result->where('end', '<=', Carbon::parse($dateTo));
         }
 
-//        return $result->paginate(20);
-        return $result->get();
+        $result->orderBy('start', 'asc');
+
+        return $result->paginate(4, $page);
     }
 }

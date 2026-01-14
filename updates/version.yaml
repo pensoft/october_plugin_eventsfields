@@ -4,3 +4,5 @@
     - Fixed country_id
 1.0.3:
     - Fixed import country
+1.0.4:
+    - Update pagination limit
