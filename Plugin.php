@@ -330,6 +330,9 @@ class Plugin extends PluginBase
     /**
      * Extend Events controller with import actions
      */
+    /**
+     * Extend Events controller with import actions
+     */
     protected function extendEventsController()
     {
         Entries::extend(function ($controller) {
@@ -337,6 +340,10 @@ class Plugin extends PluginBase
             $controller->addDynamicMethod('import_excel', function () use ($controller) {
                 $controller->pageTitle = 'Import Events from Excel';
                 $controller->bodyClass = 'compact-container';
+
+                // Pass countries to the partial
+                $controller->vars['countries'] = Country::isEnabled()->orderBy('name')->lists('name', 'id');
+
                 return $controller->makePartial('$/pensoft/eventsfields/partials/_import_excel.htm');
             });
 
@@ -368,11 +375,16 @@ class Plugin extends PluginBase
                 }
 
                 $sheetName = trim(post('sheet_name', 'Upload sheet'));
-                $categoryIds = array();
-                $countryId = null;
+                $countryId = post('country_id');
+                $categoryIds = post('categories', []);
 
                 if (empty($sheetName)) {
                     $sheetName = 'Upload sheet';
+                }
+
+                // Validate required country
+                if (empty($countryId)) {
+                    throw new ApplicationException('Please select a country.');
                 }
 
                 $results = Plugin::performImport($filePath, $sheetName, $categoryIds, $countryId);
@@ -421,6 +433,9 @@ class Plugin extends PluginBase
         });
     }
 
+    /**
+     * Perform the actual import
+     */
     /**
      * Perform the actual import
      */
@@ -482,6 +497,11 @@ class Plugin extends PluginBase
                         continue;
                     }
 
+                    // Add country_id from form selection
+                    if (!empty($countryId)) {
+                        $eventData['country_id'] = $countryId;
+                    }
+
                     // Check for duplicate entry
                     if (self::isDuplicateEntry($eventData)) {
                         $results['skipped']++;
@@ -498,6 +518,11 @@ class Plugin extends PluginBase
                     $entry->show_on_timeline = false;
                     $entry->is_internal = false;
                     $entry->save();
+
+                    // Attach categories if provided
+                    if (!empty($categoryIds)) {
+                        $entry->categories()->sync($categoryIds);
+                    }
 
                     $results['success']++;
 

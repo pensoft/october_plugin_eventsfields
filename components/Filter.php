@@ -50,12 +50,16 @@ class Filter extends ComponentBase
     ) {
         $searchTerms = is_string($searchTerms) ? json_decode($searchTerms, true) : (array)$searchTerms;
         $result = Entry::searchEvents($searchTerms);
+
+        $result->where('show_on_timeline', false);
+        $result->where('is_internal', false);
+
         if($sortCategory){
             $result->byCategory($sortCategory);
         }
+
         if($sortCountry){
-            $result->where('country', "{$sortCountry}");
-            $result->where('tags', 'ilike', "{$sortCountry}");
+            $result->where('country_id', "{$sortCountry}");
         }
 
         if($sortTarget){
