@@ -19,7 +19,6 @@ class Plugin extends PluginBase
         'pensoft.calendar',
     ];
 
-
     public function boot()
     {
         // Add database columns
@@ -28,6 +27,7 @@ class Plugin extends PluginBase
         // Extend model fillable
         $this->extendModelFillable();
 
+        // Extend model relations
         $this->extendModelRelations();
 
         // Extend form fields
@@ -41,7 +41,6 @@ class Plugin extends PluginBase
 
         // Extend list toolbar
         $this->extendListToolbar();
-
     }
 
     /**
@@ -62,8 +61,8 @@ class Plugin extends PluginBase
             'institution' => function ($table) {
                 $table->string('institution')->nullable();
             },
-            'country' => function ($table) {
-                $table->string('country')->nullable();
+            'country_id' => function ($table) {
+                $table->integer('country_id')->unsigned()->nullable();
             },
             'target' => function ($table) {
                 $table->text('target')->nullable();
@@ -91,16 +90,19 @@ class Plugin extends PluginBase
             },
         ];
 
+        // Drop old 'country' string column if exists
+        if (\Schema::hasColumn($tableName, 'country') && !\Schema::hasColumn($tableName, 'country_id')) {
+            \Schema::table($tableName, function ($table) {
+                $table->dropColumn('country');
+            });
+        }
+
         foreach ($columns as $column => $callback) {
             if (!\Schema::hasColumn($tableName, $column)) {
                 \Schema::table($tableName, $callback);
             }
         }
     }
-
-
-
-
 
     /**
      * Extend Entry model fillable property
@@ -118,7 +120,7 @@ class Plugin extends PluginBase
                 'url',
                 'institution',
                 'is_public',
-                'country',
+                'country_id',
                 'target',
                 'theme',
                 'format',
@@ -134,18 +136,44 @@ class Plugin extends PluginBase
             } else {
                 $model->fillable = array_unique(array_merge($model->fillable ?? [], $newFillable));
             }
+
+            // Handle empty strings for integer/nullable fields before save
+            $model->bindEvent('model.beforeSave', function () use ($model) {
+                // Convert empty strings to null for integer fields
+                $integerFields = ['country_id'];
+                foreach ($integerFields as $field) {
+                    if ($model->{$field} === '' || $model->{$field} === null) {
+                        $model->{$field} = null;
+                    }
+                }
+
+                // Convert empty strings to null for nullable text fields
+                $nullableFields = [
+                    'institution', 'target', 'theme', 'format', 'fee',
+                    'remarks', 'tags', 'contact', 'email',
+                    'meta_keywords', 'meta_description', 'meta_title'
+                ];
+                foreach ($nullableFields as $field) {
+                    if (isset($model->{$field}) && $model->{$field} === '') {
+                        $model->{$field} = null;
+                    }
+                }
+            });
         });
     }
 
     protected function extendModelRelations()
     {
         Entry::extend(function ($model) {
-            // belongs_to relation for country
+            // belongsTo relation for country
             if (!isset($model->belongsTo['country'])) {
-                $model->belongsTo['country'] = ['RainLab\Location\Models\Country', 'key' => 'country'];
+                $model->belongsTo['country'] = [
+                    'RainLab\Location\Models\Country',
+                    'key' => 'country_id'
+                ];
             }
 
-            // belongs_to_many relation for categories
+            // belongsToMany relation for categories
             if (!isset($model->belongsToMany['categories'])) {
                 $model->belongsToMany['categories'] = [
                     'Pensoft\Calendar\Models\Category',
@@ -157,7 +185,6 @@ class Plugin extends PluginBase
         });
     }
 
-
     /**
      * Extend form fields
      */
@@ -167,7 +194,12 @@ class Plugin extends PluginBase
             return;
         }
 
-        Entries::extendFormFields(function ($form) {
+        Entries::extendFormFields(function ($form, $model, $context) {
+            // Only extend for Entry model
+            if (!$model instanceof Entry) {
+                return;
+            }
+
             $form->addTabFields([
                 'institution' => [
                     'label' => 'Implementing institution (full name, no acronym)',
@@ -183,12 +215,12 @@ class Plugin extends PluginBase
                     'comment' => 'ON -> public; OFF -> closed',
                     'tab'     => 'Additional fields',
                 ],
-                'country' => [
-                    'label'   => 'Country',
-                    'span'    => 'left',
-                    'type'    => 'dropdown',
-                    'options' => Country::isEnabled()->lists('name', 'id'),
-                    'tab'     => 'Additional fields',
+                'country_id' => [
+                    'label'       => 'Country',
+                    'span'        => 'left',
+                    'type'        => 'dropdown',
+                    'emptyOption' => '-- Select Country --',
+                    'tab'         => 'Additional fields',
                 ],
                 'target' => [
                     'label'      => 'Target',
@@ -250,6 +282,13 @@ class Plugin extends PluginBase
                     'tab'   => 'Additional fields',
                 ],
             ]);
+        });
+
+        // Add dropdown options method to Entry model
+        Entry::extend(function ($model) {
+            $model->addDynamicMethod('getCountryIdOptions', function () {
+                return ['' => '-- Select Country --'] + Country::isEnabled()->orderBy('name')->lists('name', 'id');
+            });
         });
     }
 
@@ -329,22 +368,12 @@ class Plugin extends PluginBase
                 }
 
                 $sheetName = trim(post('sheet_name', 'Upload sheet'));
-                $categoryIds = post('categories', []);
-                $countryId = post('country', null);
-
+                $categoryIds = array();
+                $countryId = null;
 
                 if (empty($sheetName)) {
                     $sheetName = 'Upload sheet';
                 }
-
-                // Validate required fields
-//                if (empty($categoryIds)) {
-//                    throw new ApplicationException('Please select at least one category.');
-//                }
-//
-//                if (empty($countryId)) {
-//                    throw new ApplicationException('Please select a country.');
-//                }
 
                 $results = Plugin::performImport($filePath, $sheetName, $categoryIds, $countryId);
 
@@ -453,9 +482,6 @@ class Plugin extends PluginBase
                         continue;
                     }
 
-                    // Add country from (belongs_to relation)
-                    $eventData['country'] = $countryId; //TODO
-
                     // Check for duplicate entry
                     if (self::isDuplicateEntry($eventData)) {
                         $results['skipped']++;
@@ -472,11 +498,6 @@ class Plugin extends PluginBase
                     $entry->show_on_timeline = false;
                     $entry->is_internal = false;
                     $entry->save();
-
-                    // Attach categories (belongs_to_many relation)
-                    if (!empty($categoryIds)) {
-                        $entry->categories()->sync($categoryIds);
-                    }
 
                     $results['success']++;
 
@@ -496,6 +517,10 @@ class Plugin extends PluginBase
     /**
      * Check if entry already exists based on title, start, end, place, country
      */
+    /**
+     * Check if entry already exists based on title, start date, end date, place, country
+     * Note: Only compares date portion of start/end timestamps, not the time
+     */
     protected static function isDuplicateEntry($eventData)
     {
         $query = Entry::query();
@@ -507,33 +532,35 @@ class Plugin extends PluginBase
             $query->whereNull('title');
         }
 
-        // Check start
+        // Check start (date only, ignore time)
         if (!empty($eventData['start'])) {
-            $query->where('start', $eventData['start']);
+            $startDate = date('Y-m-d', strtotime($eventData['start']));
+            $query->whereRaw('DATE(start) = ?', [$startDate]);
         } else {
             $query->whereNull('start');
         }
 
-        // Check end
+        // Check end (date only, ignore time)
         if (!empty($eventData['end'])) {
-            $query->where('end', $eventData['end']);
+            $endDate = date('Y-m-d', strtotime($eventData['end']));
+            $query->whereRaw('DATE("end") = ?', [$endDate]);
         } else {
             $query->whereNull('end');
         }
 
         // Check place
-        if (!empty($eventData['place'])) {
-            $query->where('place', $eventData['place']);
-        } else {
-            $query->whereNull('place');
-        }
+//        if (!empty($eventData['place'])) {
+//            $query->where('place', $eventData['place']);
+//        } else {
+//            $query->whereNull('place');
+//        }
 
-        // Check country (relation)
-        if (!empty($eventData['country'])) {
-            $query->where('country', $eventData['country']);
-        } else {
-            $query->whereNull('country');
-        }
+//        // Check country_id
+//        if (!empty($eventData['country_id'])) {
+//            $query->where('country_id', $eventData['country_id']);
+//        } else {
+//            $query->whereNull('country_id');
+//        }
 
         return $query->exists();
     }
@@ -689,13 +716,8 @@ class Plugin extends PluginBase
      */
     protected static function generateUniqueSlug($title)
     {
-        // Create base slug
         $slug = \Str::slug($title);
-
-        // Limit length
         $slug = substr($slug, 0, 200);
-
-        // Check if slug exists and make it unique
         $originalSlug = $slug;
         $counter = 1;
 
@@ -756,7 +778,6 @@ class Plugin extends PluginBase
         }
 
         $value = strtolower(trim($value));
-
         $closedValues = ['closed', 'closed (invitation /registration)', 'invitation', 'private', 'no', 'false', '0'];
 
         return !in_array($value, $closedValues);
@@ -771,12 +792,10 @@ class Plugin extends PluginBase
             return null;
         }
 
-        // If it's already a date string (YYYY-MM-DD)
         if (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}/', $value)) {
             return date('Y-m-d', strtotime($value));
         }
 
-        // If it's an Excel serial date number
         if (is_numeric($value)) {
             try {
                 $dateTime = ExcelDate::excelToDateTimeObject($value);
@@ -786,7 +805,6 @@ class Plugin extends PluginBase
             }
         }
 
-        // Try to parse as string date
         try {
             $timestamp = strtotime($value);
             if ($timestamp !== false) {
@@ -808,12 +826,10 @@ class Plugin extends PluginBase
             return null;
         }
 
-        // If it's already a time string (HH:MM:SS or HH:MM)
         if (is_string($value) && preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $value)) {
             return $value;
         }
 
-        // If it's an Excel time fraction (0.0 - 1.0)
         if (is_numeric($value) && $value >= 0 && $value < 1) {
             $totalSeconds = round($value * 86400);
             $hours = floor($totalSeconds / 3600);
@@ -822,7 +838,6 @@ class Plugin extends PluginBase
             return sprintf('%02d:%02d:%02d', $hours, $minutes, $seconds);
         }
 
-        // If it's an Excel datetime serial
         if (is_numeric($value)) {
             try {
                 $dateTime = ExcelDate::excelToDateTimeObject($value);
