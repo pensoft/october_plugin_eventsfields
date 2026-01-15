@@ -6,3 +6,5 @@
     - Fixed import country
 1.0.4:
     - Update pagination limit
+1.0.5:
+    - Filtration logic update

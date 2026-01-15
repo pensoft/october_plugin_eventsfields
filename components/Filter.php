@@ -79,6 +79,12 @@ class Filter extends ComponentBase
 
         $result->orderBy('start', 'asc');
 
+        // Filter for short-term events (< 8 days duration or no end date)
+        $result->where(function($query) {
+            $query->whereNull('end')
+                  ->orWhereRaw('("end"::date - "start"::date) < 8');
+        });
+
         return $result->paginate(4, $page);
     }
 }
