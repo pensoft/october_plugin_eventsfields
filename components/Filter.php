@@ -85,6 +85,6 @@ class Filter extends ComponentBase
                   ->orWhereRaw('("end"::date - "start"::date) < 8');
         });
 
-        return $result->paginate(4, $page);
+        return $result->paginate(10, $page);
     }
 }
