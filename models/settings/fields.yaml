@@ -40,5 +40,14 @@ fields:
             Preview without saving:
             <code>php artisan events:import --dry-run</code>
 
-            Clear and reimport:
-            <code>php artisan events:import --truncate</code>
+            Populate missing data for existing entries:
+            <code>php artisan events:import --populate-missing</code>
+
+            Update entries where title, start and end dates match:
+            <code>php artisan events:import --update-matching</code>
+
+            <code>bash# Preview what would be updated
+            php artisan events:import --update-matching --dry-run
+
+            # Actually update matching entries
+            php artisan events:import --update-matching</code>

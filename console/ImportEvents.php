@@ -26,8 +26,8 @@ class ImportEvents extends Command
     protected $signature = 'events:import
                             {--url= : API URL to fetch JSON from (overrides config)}
                             {--dry-run : Preview import without saving}
-                            {--truncate : Clear existing imported events first}
-                            {--populate-missing : Populate missing data for existing entries}';
+                            {--populate-missing : Populate missing data for existing entries}
+                            {--update-matching : Update entries where title, start and end dates match}';
 
     /**
      * @var string Table name
@@ -61,12 +61,17 @@ class ImportEvents extends Command
             }
         }
         $dryRun = $this->option('dry-run');
-        $truncate = $this->option('truncate');
         $populateMissing = $this->option('populate-missing');
+        $updateMatching = $this->option('update-matching');
 
         // If populate-missing mode, run that instead of normal import
         if ($populateMissing) {
             return $this->handlePopulateMissing($url, $dryRun);
+        }
+
+        // If update-matching mode, run that instead of normal import
+        if ($updateMatching) {
+            return $this->handleUpdateMatching($url, $dryRun);
         }
 
         $this->info("Starting events import...");
@@ -115,13 +120,6 @@ class ImportEvents extends Command
         $groupedItems = $this->groupItemsByGlobalId($items);
         $this->info("Found " . count($groupedItems) . " unique events after grouping");
 
-        if ($truncate && !$dryRun) {
-            // Only delete externally imported events (is_internal = false)
-            $deleted = Db::table($this->table)
-                ->where('is_internal', false)
-                ->delete();
-            $this->warn("Deleted {$deleted} previously imported events");
-        }
 
         $stats = [
             'inserted' => 0,
@@ -1029,6 +1027,182 @@ class ImportEvents extends Command
     }
 
     /**
+     * Handle update matching mode - update entries where title, start and end dates match
+     */
+    protected function handleUpdateMatching(string $url, bool $dryRun): int
+    {
+        $this->info("Starting update matching entries...");
+        $this->info("API URL: {$url}");
+
+        // Fetch JSON from API
+        try {
+            $context = stream_context_create([
+                'http' => [
+                    'timeout' => 60,
+                    'header' => "Accept: application/json\r\n"
+                ]
+            ]);
+
+            $response = file_get_contents($url, false, $context);
+
+            if ($response === false) {
+                $this->error('Failed to fetch data from API');
+                return 1;
+            }
+        } catch (\Exception $e) {
+            $this->error('API request failed: ' . $e->getMessage());
+            return 1;
+        }
+
+        $data = json_decode($response, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $this->error('Invalid JSON response: ' . json_last_error_msg());
+            return 1;
+        }
+
+        if (!isset($data['items']) || !is_array($data['items'])) {
+            $this->error('JSON does not contain items array');
+            return 1;
+        }
+
+        // Pre-process: Group items by global_id and collect all dates
+        $groupedItems = $this->groupItemsByGlobalId($data['items']);
+        $this->info("Found " . count($groupedItems) . " unique events in API");
+
+        $stats = [
+            'updated' => 0,
+            'not_found' => 0,
+            'skipped' => 0,
+            'errors' => 0,
+        ];
+
+        $progressBar = $this->output->createProgressBar(count($groupedItems));
+        $progressBar->start();
+
+        foreach ($groupedItems as $globalId => $item) {
+            $progressBar->advance();
+
+            try {
+                // Skip items without required fields
+                if (empty($item['title'])) {
+                    $stats['skipped']++;
+                    continue;
+                }
+
+                // Transform to get the data we need
+                $entry = $this->transformItem($item, $globalId);
+
+                // Find matching entry by title and dates (ignoring time)
+                $matchingEntry = $this->findMatchingEntry($entry['title'], $entry['start'], $entry['end']);
+
+                if (!$matchingEntry) {
+                    $stats['not_found']++;
+                    continue;
+                }
+
+                if ($dryRun) {
+                    $stats['updated']++;
+                    continue;
+                }
+
+                // Prepare update data (all fields except title, start, end, slug, identifier)
+                $updateData = [
+                    'description' => $entry['description'],
+                    'url' => $entry['url'],
+                    'place' => $entry['place'],
+                    'country_id' => $entry['country_id'],
+                    'institution' => $entry['institution'],
+                    'contact' => $entry['contact'],
+                    'email' => $entry['email'],
+                    'theme' => $entry['theme'],
+                    'format' => $entry['format'],
+                    'target' => $entry['target'],
+                    'tags' => $entry['tags'],
+                    'fee' => $entry['fee'],
+                    'meta_title' => $entry['meta_title'],
+                    'meta_description' => $entry['meta_description'],
+                    'meta_keywords' => $entry['meta_keywords'],
+                    'source' => $entry['source'],
+                    'identifier' => $globalId,
+                    'updated_at' => Carbon::now(),
+                    'deleted_at' => null,
+                ];
+
+                // Update the entry
+                Db::table($this->table)
+                    ->where('id', $matchingEntry->id)
+                    ->update($updateData);
+
+                // Upload cover image if not already set
+                $this->uploadCoverImage($matchingEntry->id, $item, false);
+
+                // Attach default category if not already attached
+                $this->attachDefaultCategory($matchingEntry->id);
+
+                $stats['updated']++;
+
+            } catch (\Exception $e) {
+                $stats['errors']++;
+                $this->output->writeln('');
+                $this->error('Error processing item: ' . ($item['global_id'] ?? 'unknown'));
+                $this->error('Message: ' . $e->getMessage());
+                Log::error('Events Import: Error in update matching', [
+                    'global_id' => $item['global_id'] ?? 'unknown',
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
+        $progressBar->finish();
+        $this->output->writeln('');
+        $this->output->writeln('');
+
+        // Summary
+        $this->info("Update matching completed!" . ($dryRun ? ' (DRY RUN)' : ''));
+        $this->table(
+            ['Metric', 'Count'],
+            [
+                ['Updated', $stats['updated']],
+                ['Not found', $stats['not_found']],
+                ['Skipped', $stats['skipped']],
+                ['Errors', $stats['errors']],
+            ]
+        );
+
+        Log::info('Events Import: Update matching completed', $stats);
+
+        return 0;
+    }
+
+    /**
+     * Find entry matching by title, start date and end date (ignoring time)
+     */
+    protected function findMatchingEntry(string $title, ?string $start, ?string $end)
+    {
+        $query = Db::table($this->table)
+            ->where('title', $title);
+
+        // Compare start date (date only, ignore time)
+        if ($start) {
+            $startDate = Carbon::parse($start)->format('Y-m-d');
+            $query->whereRaw('DATE("start") = ?', [$startDate]);
+        } else {
+            $query->whereNull('start');
+        }
+
+        // Compare end date (date only, ignore time)
+        if ($end) {
+            $endDate = Carbon::parse($end)->format('Y-m-d');
+            $query->whereRaw('DATE("end") = ?', [$endDate]);
+        } else {
+            $query->whereNull('end');
+        }
+
+        return $query->first();
+    }
+
+    /**
      * Handle populate missing data mode
      */
     protected function handlePopulateMissing(string $url, bool $dryRun): int
@@ -1089,6 +1263,7 @@ class ImportEvents extends Command
         $stats = [
             'cover_images_added' => 0,
             'categories_added' => 0,
+            'countries_updated' => 0,
             'descriptions_updated' => 0,
             'places_updated' => 0,
             'urls_updated' => 0,
@@ -1173,16 +1348,25 @@ class ImportEvents extends Command
 
                 // Check and populate missing URL
                 if (empty($entry->url)) {
-                    $url = $item['web'] ?? null;
+                    $entryUrl = $item['web'] ?? null;
                     foreach ($item['media_objects'] ?? [] as $media) {
                         if ($media['rel'] === 'venuewebsite' && !empty($media['url'])) {
-                            $url = $media['url'];
+                            $entryUrl = $media['url'];
                             break;
                         }
                     }
-                    if (!empty($url)) {
-                        $updates['url'] = mb_substr($url, 0, 255);
+                    if (!empty($entryUrl)) {
+                        $updates['url'] = mb_substr($entryUrl, 0, 255);
                         $stats['urls_updated']++;
+                    }
+                }
+
+                // Check and populate missing country_id
+                if (empty($entry->country_id)) {
+                    $countryId = $this->getCountryId($item['country'] ?? null);
+                    if (!empty($countryId)) {
+                        $updates['country_id'] = $countryId;
+                        $stats['countries_updated']++;
                     }
                 }
 
@@ -1242,6 +1426,7 @@ class ImportEvents extends Command
             [
                 ['Cover images added', $stats['cover_images_added']],
                 ['Categories added', $stats['categories_added']],
+                ['Countries updated', $stats['countries_updated']],
                 ['Descriptions updated', $stats['descriptions_updated']],
                 ['Places updated', $stats['places_updated']],
                 ['URLs updated', $stats['urls_updated']],
