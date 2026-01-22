@@ -1,0 +1,44 @@
+fields:
+    api_url:
+        label: API URL
+        comment: The external API endpoint URL for fetching events
+        span: full
+        type: textarea
+        placeholder: https://api.example.com/events
+
+    import_enabled:
+        label: Enable Automatic Import
+        comment: Turn on/off the scheduled automatic import
+        span: left
+        type: switch
+        default: true
+
+    import_schedule:
+        label: Import Schedule
+        span: right
+        type: dropdown
+        default: daily
+        options:
+            hourly: Every Hour
+            every_six_hours: Every 6 Hours
+            daily: Daily (2:00 AM)
+            weekly: Weekly (Sunday 2:00 AM)
+
+    _section_manual:
+        label: Manual Import
+        type: section
+        comment: You can also run the import manually via command line
+
+    _hint_command:
+        type: hint
+        mode: info
+        label: Command Line Usage
+        comment: |
+            Run the import manually:
+            <code>php artisan events:import</code>
+
+            Preview without saving:
+            <code>php artisan events:import --dry-run</code>
+
+            Clear and reimport:
+            <code>php artisan events:import --truncate</code>

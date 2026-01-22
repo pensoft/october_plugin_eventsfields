@@ -19,6 +19,64 @@ class Plugin extends PluginBase
         'pensoft.calendar',
     ];
 
+
+    /**
+     * Returns information about this plugin.
+     */
+    public function pluginDetails()
+    {
+        return [
+            'name'        => 'Events Fields',
+            'description' => 'Extension for Pensoft.Calendar with additional fields and API import',
+            'author'      => 'Pensoft',
+            'icon'        => 'icon-calendar'
+        ];
+    }
+
+    /**
+     * Register method, called when the plugin is first registered.
+     */
+    public function register()
+    {
+        // Register console commands
+        $this->registerConsoleCommand('events.import', \Pensoft\Eventsfields\Console\ImportEvents::class);
+    }
+
+    /**
+     * Registers any scheduled tasks.
+     */
+    public function registerSchedule($schedule)
+    {
+        // Run import daily at 2:00 AM
+        $schedule->command('events:import')
+            ->dailyAt('02:00')
+            ->withoutOverlapping()
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/events-import.log'));
+
+        // Alternative: Run every 6 hours
+        // $schedule->command('events:import')
+        //     ->everySixHours()
+        //     ->withoutOverlapping()
+        //     ->runInBackground();
+    }
+
+
+    /**
+     * Registers any back-end permissions used by this plugin.
+     */
+    public function registerPermissions()
+    {
+        return [
+            'pensoft.eventsfields.manage_import' => [
+                'tab' => 'Events',
+                'label' => 'Manage Events Import'
+            ],
+        ];
+    }
+
+
+
     public function boot()
     {
         // Add database columns
@@ -884,5 +942,17 @@ class Plugin extends PluginBase
 
     public function registerSettings()
     {
+        return [
+            'settings' => [
+                'label'       => 'Events Import Settings',
+                'description' => 'Configure the external events API import.',
+                'category'    => 'Events',
+                'icon'        => 'icon-download',
+                'class'       => \Pensoft\Eventsfields\Models\Settings::class,
+                'order'       => 500,
+                'keywords'    => 'events import api',
+                'permissions' => ['pensoft.eventsfields.manage_import']
+            ]
+        ];
     }
 }
