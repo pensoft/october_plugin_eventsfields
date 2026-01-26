@@ -136,7 +136,7 @@ class Filter extends ComponentBase
 
     protected function searchOngoingRecords($filters, $page = 1)
     {
-        $perPage = 4;
+        $perPage = 10;
 
         $query = Entry::query();
         $this->applyFilters($query, $filters);

@@ -16,3 +16,5 @@
     - "Import via API -- populate matching"
 1.0.9:
     - "Pagination and filter ongoing events"
+1.0.10:
+    - "Pagination 10 per page"
