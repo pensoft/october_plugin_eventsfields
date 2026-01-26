@@ -22,69 +22,136 @@ class Filter extends ComponentBase
         return [];
     }
 
-    public function onSearchEvents() {
+    public function onSearchEvents()
+    {
         $translator = \RainLab\Translate\Classes\Translator::instance();
-
         $currentLang = $translator->getLocale();
 
-        $searchTerms = post('searchTerms');
-        $sortCategory = post('sortCategory');
-        $sortCountry = post('sortCountry');
-        $sortTarget = post('sortTarget');
-        $sortTheme = post('sortTheme');
-        $dateFrom = post('dateFrom');
-        $dateTo = post('dateTo');
+        $filters = $this->getFilters();
         $page = post('page', 1);
-        $this->page['records'] = $this->searchRecords($searchTerms, $sortCategory, $sortCountry, $sortTarget, $sortTheme, $dateFrom, $dateTo, $page);
+
+        $this->page['records'] = $this->searchRecords($filters, $page);
+        $this->page['exhibitions'] = $this->searchOngoingRecords($filters, 1);
         $this->page['currentLang'] = $currentLang;
-        return ['#recordsContainer' => $this->renderPartial('events-short-term')];
+
+        return [
+            '#recordsContainer' => $this->renderPartial('events-short-term'),
+            '#ongoingEventsContainer' => $this->renderPartial('events-ongoing')
+        ];
     }
 
-    protected function searchRecords(
-        $searchTerms = '',
-        $sortCategory = 0,
-        $sortCountry = 0,
-        $sortTarget = 0,
-        $sortTheme = 0,
-        $dateFrom = '',
-        $dateTo = '',
-        $page = 1
-    ) {
-        $searchTerms = is_string($searchTerms) ? json_decode($searchTerms, true) : (array)$searchTerms;
-        $result = Entry::searchEvents($searchTerms);
+    public function onLoadOngoingEvents()
+    {
+        $translator = \RainLab\Translate\Classes\Translator::instance();
+        $currentLang = $translator->getLocale();
 
-        $result->where('show_on_timeline', false);
-        $result->where('is_internal', false);
+        $filters = $this->getFilters();
+        $page = post('ongoing_page', 1);
 
-        if($sortCategory){
-            $result->byCategory($sortCategory);
+        $this->page['exhibitions'] = $this->searchOngoingRecords($filters, $page);
+        $this->page['currentLang'] = $currentLang;
+
+        return ['#ongoingEventsContainer' => $this->renderPartial('events-ongoing')];
+    }
+
+    protected function getFilters()
+    {
+        return [
+            'searchTerms' => post('searchTerms'),
+            'sortCategory' => post('sortCategory'),
+            'sortCountry' => post('sortCountry'),
+            'sortTarget' => post('sortTarget'),
+            'sortTheme' => post('sortTheme'),
+            'dateFrom' => post('dateFrom'),
+            'dateTo' => post('dateTo'),
+        ];
+    }
+
+    protected function applyFilters($query, $filters)
+    {
+        $searchTerms = is_string($filters['searchTerms'])
+            ? json_decode($filters['searchTerms'], true)
+            : (array)$filters['searchTerms'];
+
+        if (!empty($searchTerms)) {
+            $query->where(function($q) use ($searchTerms) {
+                foreach ($searchTerms as $term) {
+                    $q->orWhere('title', 'ILIKE', "%{$term}%");
+                    $q->orWhere('description', 'ILIKE', "%{$term}%");
+                    $q->orWhere('institution', 'ILIKE', "%{$term}%");
+                    $q->orWhere('fee', 'ILIKE', "%{$term}%");
+                    $q->orWhere('tags', 'ILIKE', "%{$term}%");
+                    $q->orWhere('contact', 'ILIKE', "%{$term}%");
+                    $q->orWhere('email', 'ILIKE', "%{$term}%");
+                }
+            });
         }
 
-        if($sortCountry){
-            $result->where('country_id', "{$sortCountry}");
+        $query->where('show_on_timeline', false);
+        $query->where('is_internal', false);
+        $query->where('end', '>', Carbon::now());
+
+        if ($filters['sortCategory']) {
+            $query->byCategory($filters['sortCategory']);
         }
 
-        if($sortTarget){
-            $result->where('target', 'ilike', "%{$sortTarget}%");
-        }
-        if($sortTheme){
-            $result->where('theme', 'ilike', "%{$sortTheme}%");
-        }
-        if($dateFrom){
-            $result->where('start', '>=', Carbon::parse($dateFrom));
-        }
-        if($dateTo){
-            $result->where('end', '<=', Carbon::parse($dateTo));
+        if ($filters['sortCountry']) {
+            $query->where('country_id', "{$filters['sortCountry']}");
         }
 
-        $result->orderBy('start', 'asc');
+        if ($filters['sortTarget']) {
+            $query->where('target', 'ilike', "%{$filters['sortTarget']}%");
+        }
+
+        if ($filters['sortTheme']) {
+            $query->where('theme', 'ilike', "%{$filters['sortTheme']}%");
+        }
+
+        if ($filters['dateFrom']) {
+            $query->where('start', '>=', Carbon::parse($filters['dateFrom']));
+        }
+
+        if ($filters['dateTo']) {
+            $query->where('end', '<=', Carbon::parse($filters['dateTo']));
+        }
+
+        $query->orderBy('start', 'asc');
+
+        return $query;
+    }
+
+    protected function searchRecords($filters, $page = 1)
+    {
+        $query = Entry::query();
+        $this->applyFilters($query, $filters);
 
         // Filter for short-term events (< 8 days duration or no end date)
-        $result->where(function($query) {
-            $query->whereNull('end')
-                  ->orWhereRaw('("end"::date - "start"::date) < 8');
+        $query->where(function ($q) {
+            $q->whereNull('end')
+                ->orWhereRaw('("end"::date - "start"::date) < 8');
         });
 
-        return $result->paginate(10, $page);
+        return $query->paginate(10, $page);
+    }
+
+    protected function searchOngoingRecords($filters, $page = 1)
+    {
+        $perPage = 4;
+
+        $query = Entry::query();
+        $this->applyFilters($query, $filters);
+
+        // Get all results first, then filter for ongoing events (>= 8 days)
+        $allOngoingEvents = $query->get()->filter(function ($item) {
+            return Carbon::parse($item->start)->diffInDays(Carbon::parse($item->end)) >= 8;
+        });
+
+        return new \Illuminate\Pagination\LengthAwarePaginator(
+            $allOngoingEvents->forPage($page, $perPage),
+            $allOngoingEvents->count(),
+            $perPage,
+            $page,
+            ['path' => request()->url(), 'pageName' => 'ongoing_page']
+        );
     }
 }
