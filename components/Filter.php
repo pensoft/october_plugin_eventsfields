@@ -101,10 +101,14 @@ class Filter extends ComponentBase
 
         if ($filters['sortTarget']) {
             $query->where('target', 'ilike', "%{$filters['sortTarget']}%");
+            $query->orWhere('tags', 'ILIKE', "%{$filters['sortTarget']}%");
+            $query->orWhere('meta_keywords', 'ILIKE', "%{$filters['sortTarget']}%");
         }
 
         if ($filters['sortTheme']) {
             $query->where('theme', 'ilike', "%{$filters['sortTheme']}%");
+            $query->orWhere('tags', 'ILIKE', "%{$filters['sortTheme']}%");
+            $query->orWhere('meta_keywords', 'ILIKE', "%{$filters['sortTheme']}%");
         }
 
         if ($filters['dateFrom']) {

@@ -34,20 +34,17 @@ fields:
         mode: info
         label: Command Line Usage
         comment: |
-            Run the import manually:
+            # Normal import (insert new, update by identifier)
             <code>php artisan events:import</code>
 
-            Preview without saving:
-            <code>php artisan events:import --dry-run</code>
-
-            Populate missing data for existing entries:
+            # Populate only missing fields for existing entries (by identifier)
             <code>php artisan events:import --populate-missing</code>
 
-            Update entries where title, start and end dates match:
+            # Update non-key fields for entries matching by title+dates
             <code>php artisan events:import --update-matching</code>
 
-            <code>bash# Preview what would be updated
-            php artisan events:import --update-matching --dry-run
+            # Update ALL fields for entries matching by title+dates (including replacing images)
+            <code>php artisan events:import --update-all-matching</code>
 
-            # Actually update matching entries
-            php artisan events:import --update-matching</code>
+            # Add --dry-run to any command to preview without saving
+            <code>php artisan events:import --update-all-matching --dry-run</code>

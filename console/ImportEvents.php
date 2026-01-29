@@ -27,7 +27,8 @@ class ImportEvents extends Command
                             {--url= : API URL to fetch JSON from (overrides config)}
                             {--dry-run : Preview import without saving}
                             {--populate-missing : Populate missing data for existing entries}
-                            {--update-matching : Update entries where title, start and end dates match}';
+                            {--update-matching : Update entries where title, start and end dates match}
+                            {--update-all-matching : Update ALL fields for entries matching by title and dates}';
 
     /**
      * @var string Table name
@@ -63,6 +64,7 @@ class ImportEvents extends Command
         $dryRun = $this->option('dry-run');
         $populateMissing = $this->option('populate-missing');
         $updateMatching = $this->option('update-matching');
+        $updateAllMatching = $this->option('update-all-matching');
 
         // If populate-missing mode, run that instead of normal import
         if ($populateMissing) {
@@ -72,6 +74,11 @@ class ImportEvents extends Command
         // If update-matching mode, run that instead of normal import
         if ($updateMatching) {
             return $this->handleUpdateMatching($url, $dryRun);
+        }
+
+        // If update-all-matching mode, run that instead of normal import
+        if ($updateAllMatching) {
+            return $this->handleUpdateAllMatching($url, $dryRun);
         }
 
         $this->info("Starting events import...");
@@ -354,9 +361,9 @@ class ImportEvents extends Command
         // Keywords/tags
         $tags = !empty($keywords) ? implode(', ', $keywords) : null;
 
-        // Target groups from features - map to allowed values
+        // Target groups from features and keywords - map to allowed values
         $features = $item['features'] ?? [];
-        $targetGroups = $this->mapTargetGroups($features);
+        $targetGroups = $this->mapTargetGroups($features, $keywords);
         $target = !empty($targetGroups) ? implode(', ', $targetGroups) : null;
 
         // Fee/price info
@@ -697,9 +704,9 @@ class ImportEvents extends Command
     }
 
     /**
-     * Map API target group features to allowed target group values
+     * Map API target group features and keywords to allowed target group values
      */
-    protected function mapTargetGroups(array $features): array
+    protected function mapTargetGroups(array $features, array $keywords = []): array
     {
         // Allowed target groups in database
         $allowedGroups = [
@@ -716,66 +723,103 @@ class ImportEvents extends Command
         // Mapping from API values to database values
         $mapping = [
             // Children
-            'Target Group Children' => 'Children (0-16 y)',
-            'Target Group Kids' => 'Children (0-16 y)',
+            'target group children' => 'Children (0-16 y)',
+            'target group kids' => 'Children (0-16 y)',
             'children' => 'Children (0-16 y)',
             'kids' => 'Children (0-16 y)',
+            'child' => 'Children (0-16 y)',
 
             // Young people / Teenagers
-            'Target Group Teenager' => 'Young people (16-26 y)',
-            'Target Group Young Adults' => 'Young people (16-26 y)',
-            'Target Group Youth' => 'Young people (16-26 y)',
+            'target group teenager' => 'Young people (16-26 y)',
+            'target group young adults' => 'Young people (16-26 y)',
+            'target group youth' => 'Young people (16-26 y)',
             'teenager' => 'Young people (16-26 y)',
             'yadult' => 'Young people (16-26 y)',
             'talents' => 'Young people (16-26 y)',
+            'young' => 'Young people (16-26 y)',
+            'youth' => 'Young people (16-26 y)',
+            'student' => 'Young people (16-26 y)',
+            'students' => 'Young people (16-26 y)',
 
             // General public / Adults
-            'Target Group Adult' => 'General public/Civil society',
-            'Target Group General Public' => 'General public/Civil society',
-            'Target Group Civil Society' => 'General public/Civil society',
+            'target group adult' => 'General public/Civil society',
+            'target group general public' => 'General public/Civil society',
+            'target group civil society' => 'General public/Civil society',
             'adult' => 'General public/Civil society',
+            'public' => 'General public/Civil society',
+            'general' => 'General public/Civil society',
+            'civil' => 'General public/Civil society',
 
             // Elderly
-            'Target Group the Elderly' => 'Elderly people (+65y)',
-            'Target Group Seniors' => 'Elderly people (+65y)',
+            'target group the elderly' => 'Elderly people (+65y)',
+            'target group seniors' => 'Elderly people (+65y)',
             'senior' => 'Elderly people (+65y)',
+            'seniors' => 'Elderly people (+65y)',
+            'elderly' => 'Elderly people (+65y)',
 
             // Entrepreneurs/Businesses
-            'Target Group Entrepreneurs' => 'Entrepreneurs/Businesses',
-            'Target Group Businesses' => 'Entrepreneurs/Businesses',
-            'Target Group Business' => 'Entrepreneurs/Businesses',
+            'target group entrepreneurs' => 'Entrepreneurs/Businesses',
+            'target group businesses' => 'Entrepreneurs/Businesses',
+            'target group business' => 'Entrepreneurs/Businesses',
+            'entrepreneur' => 'Entrepreneurs/Businesses',
+            'entrepreneurs' => 'Entrepreneurs/Businesses',
+            'business' => 'Entrepreneurs/Businesses',
+            'businesses' => 'Entrepreneurs/Businesses',
+            'company' => 'Entrepreneurs/Businesses',
+            'companies' => 'Entrepreneurs/Businesses',
 
             // Policy makers
-            'Target Group Policy Makers' => 'Policy makers',
-            'Target Group Politicians' => 'Policy makers',
+            'target group policy makers' => 'Policy makers',
+            'target group politicians' => 'Policy makers',
+            'policy' => 'Policy makers',
+            'policy maker' => 'Policy makers',
+            'policy makers' => 'Policy makers',
+            'politician' => 'Policy makers',
+            'politicians' => 'Policy makers',
+            'government' => 'Policy makers',
 
             // Early career researchers
-            'Target Group Early Career Researchers' => 'Early career researchers',
-            'Target Group PhD Students' => 'Early career researchers',
-            'Target Group Postdocs' => 'Early career researchers',
+            'target group early career researchers' => 'Early career researchers',
+            'target group phd students' => 'Early career researchers',
+            'target group postdocs' => 'Early career researchers',
+            'phd' => 'Early career researchers',
+            'postdoc' => 'Early career researchers',
+            'postdocs' => 'Early career researchers',
+            'early career' => 'Early career researchers',
 
             // All researchers
-            'Target Group Researchers' => 'All researchers',
-            'Target Group Scientists' => 'All researchers',
+            'target group researchers' => 'All researchers',
+            'target group scientists' => 'All researchers',
             'researcher' => 'All researchers',
+            'researchers' => 'All researchers',
+            'scientist' => 'All researchers',
+            'scientists' => 'All researchers',
+            'academic' => 'All researchers',
+            'academics' => 'All researchers',
 
             // Teachers (map to general public)
             'teacher' => 'General public/Civil society',
-            'Target Group Teachers' => 'General public/Civil society',
+            'teachers' => 'General public/Civil society',
+            'target group teachers' => 'General public/Civil society',
         ];
 
         $mappedGroups = [];
 
-        foreach ($features as $feature) {
+        // Combine features and keywords for matching
+        $allTerms = array_merge($features, $keywords);
+
+        foreach ($allTerms as $term) {
+            $termLower = strtolower(trim($term));
+
             // Check direct mapping
-            if (isset($mapping[$feature])) {
-                $mappedGroups[] = $mapping[$feature];
+            if (isset($mapping[$termLower])) {
+                $mappedGroups[] = $mapping[$termLower];
                 continue;
             }
 
-            // Check case-insensitive mapping
+            // Check if term contains any mapping key
             foreach ($mapping as $key => $value) {
-                if (strcasecmp($feature, $key) === 0) {
+                if (strpos($termLower, $key) !== false) {
                     $mappedGroups[] = $value;
                     break;
                 }
@@ -789,7 +833,7 @@ class ImportEvents extends Command
     /**
      * Map API categories and keywords to allowed thematic focuses
      */
-    protected function mapThematicFocuses(array $categories, array $keywords): array
+    protected function mapThematicFocuses(array $categories, array $keywords = []): array
     {
         // Allowed thematic focuses
         $allowedFocuses = [
@@ -1028,6 +1072,7 @@ class ImportEvents extends Command
 
     /**
      * Handle update matching mode - update entries where title, start and end dates match
+     * Updates only non-key fields (keeps title, start, end, slug unchanged)
      */
     protected function handleUpdateMatching(string $url, bool $dryRun): int
     {
@@ -1106,7 +1151,7 @@ class ImportEvents extends Command
                     continue;
                 }
 
-                // Prepare update data (all fields except title, start, end, slug, identifier)
+                // Prepare update data (all fields except title, start, end, slug)
                 $updateData = [
                     'description' => $entry['description'],
                     'url' => $entry['url'],
@@ -1171,6 +1216,170 @@ class ImportEvents extends Command
         );
 
         Log::info('Events Import: Update matching completed', $stats);
+
+        return 0;
+    }
+
+    /**
+     * Handle update ALL fields for matching entries (by title and dates)
+     * Updates ALL fields including title, start, end, slug, and replaces cover image
+     */
+    protected function handleUpdateAllMatching(string $url, bool $dryRun): int
+    {
+        $this->info("Starting update ALL fields for matching entries...");
+        $this->info("API URL: {$url}");
+
+        // Fetch JSON from API
+        try {
+            $context = stream_context_create([
+                'http' => [
+                    'timeout' => 60,
+                    'header' => "Accept: application/json\r\n"
+                ]
+            ]);
+
+            $response = file_get_contents($url, false, $context);
+
+            if ($response === false) {
+                $this->error('Failed to fetch data from API');
+                return 1;
+            }
+        } catch (\Exception $e) {
+            $this->error('API request failed: ' . $e->getMessage());
+            return 1;
+        }
+
+        $data = json_decode($response, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $this->error('Invalid JSON response: ' . json_last_error_msg());
+            return 1;
+        }
+
+        if (!isset($data['items']) || !is_array($data['items'])) {
+            $this->error('JSON does not contain items array');
+            return 1;
+        }
+
+        // Pre-process: Group items by global_id and collect all dates
+        $groupedItems = $this->groupItemsByGlobalId($data['items']);
+        $this->info("Found " . count($groupedItems) . " unique events in API");
+
+        $stats = [
+            'updated' => 0,
+            'not_found' => 0,
+            'skipped' => 0,
+            'errors' => 0,
+        ];
+
+        $progressBar = $this->output->createProgressBar(count($groupedItems));
+        $progressBar->start();
+
+        foreach ($groupedItems as $globalId => $item) {
+            $progressBar->advance();
+
+            try {
+                // Skip items without required fields
+                if (empty($item['title'])) {
+                    $stats['skipped']++;
+                    continue;
+                }
+
+                // Transform to get the data we need
+                $entry = $this->transformItem($item, $globalId);
+
+                // Find matching entry by title and dates (ignoring time)
+                $matchingEntry = $this->findMatchingEntry($entry['title'], $entry['start'], $entry['end']);
+
+                if (!$matchingEntry) {
+                    $stats['not_found']++;
+                    continue;
+                }
+
+                if ($dryRun) {
+                    $stats['updated']++;
+                    continue;
+                }
+
+                // Prepare update data - ALL fields including title, start, end, slug
+                $updateData = [
+                    'title' => $entry['title'],
+                    'slug' => $entry['slug'],
+                    'identifier' => $globalId,
+                    'start' => $entry['start'],
+                    'end' => $entry['end'],
+                    'all_day' => $entry['all_day'],
+                    'description' => $entry['description'],
+                    'url' => $entry['url'],
+                    'place' => $entry['place'],
+                    'country_id' => $entry['country_id'],
+                    'institution' => $entry['institution'],
+                    'contact' => $entry['contact'],
+                    'email' => $entry['email'],
+                    'theme' => $entry['theme'],
+                    'format' => $entry['format'],
+                    'target' => $entry['target'],
+                    'tags' => $entry['tags'],
+                    'fee' => $entry['fee'],
+                    'meta_title' => $entry['meta_title'],
+                    'meta_description' => $entry['meta_description'],
+                    'meta_keywords' => $entry['meta_keywords'],
+                    'is_public' => $entry['is_public'],
+                    'is_internal' => $entry['is_internal'],
+                    'show_on_timeline' => $entry['show_on_timeline'],
+                    'source' => $entry['source'],
+                    'updated_at' => Carbon::now(),
+                    'deleted_at' => null,
+                ];
+
+                // Update the entry
+                Db::table($this->table)
+                    ->where('id', $matchingEntry->id)
+                    ->update($updateData);
+
+                // Delete existing cover image and upload new one
+                Db::table('system_files')
+                    ->where('attachment_type', 'Pensoft\Calendar\Models\Entry')
+                    ->where('attachment_id', $matchingEntry->id)
+                    ->where('field', 'cover_image')
+                    ->delete();
+
+                $this->uploadCoverImage($matchingEntry->id, $item, true);
+
+                // Re-attach default category
+                $this->attachDefaultCategory($matchingEntry->id);
+
+                $stats['updated']++;
+
+            } catch (\Exception $e) {
+                $stats['errors']++;
+                $this->output->writeln('');
+                $this->error('Error processing item: ' . ($item['global_id'] ?? 'unknown'));
+                $this->error('Message: ' . $e->getMessage());
+                Log::error('Events Import: Error in update all matching', [
+                    'global_id' => $item['global_id'] ?? 'unknown',
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
+        $progressBar->finish();
+        $this->output->writeln('');
+        $this->output->writeln('');
+
+        // Summary
+        $this->info("Update ALL fields completed!" . ($dryRun ? ' (DRY RUN)' : ''));
+        $this->table(
+            ['Metric', 'Count'],
+            [
+                ['Updated', $stats['updated']],
+                ['Not found', $stats['not_found']],
+                ['Skipped', $stats['skipped']],
+                ['Errors', $stats['errors']],
+            ]
+        );
+
+        Log::info('Events Import: Update all matching completed', $stats);
 
         return 0;
     }
@@ -1326,10 +1535,16 @@ class ImportEvents extends Command
 
                 // Check and populate missing description
                 if (empty($entry->description)) {
-                    $description = $this->extractText($item['texts'] ?? [], 'details', 'text/plain');
+                    $description = $this->extractText($item['texts'] ?? [], 'details', 'text/html');
                     if (empty($description)) {
-                        $description = $this->extractText($item['texts'] ?? [], 'details', 'text/html');
-                        $description = $this->stripHtml($description);
+                        $description = $this->extractText($item['texts'] ?? [], 'details', 'text/plain');
+                        if ($description) {
+                            $description = nl2br($description);
+                        }
+                    }
+                    if ($description) {
+                        $description = $this->cleanUnicodeEscapes($description);
+                        $description = $this->cleanHtml($description);
                     }
                     if (!empty($description)) {
                         $updates['description'] = $description;
@@ -1384,7 +1599,8 @@ class ImportEvents extends Command
                 // Check and populate missing target
                 if (empty($entry->target)) {
                     $features = $item['features'] ?? [];
-                    $targetGroups = $this->mapTargetGroups($features);
+                    $keywords = $item['keywords'] ?? [];
+                    $targetGroups = $this->mapTargetGroups($features, $keywords);
                     if (!empty($targetGroups)) {
                         $updates['target'] = mb_substr(implode(', ', $targetGroups), 0, 255);
                         $stats['targets_updated']++;
