@@ -20,3 +20,5 @@
     - "Pagination 10 per page"
 1.0.11:
     - "Fix events filter to serch in the keywords; Update events via API daily"
+1.0.12:
+    - "Fix schedule"

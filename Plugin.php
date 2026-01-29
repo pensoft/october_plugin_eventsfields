@@ -47,18 +47,21 @@ class Plugin extends PluginBase
      */
     public function registerSchedule($schedule)
     {
-        // Run import daily at 2:00 AM
-        $schedule->command('events:import')
+        // First: Update all fields for existing entries that match by title and dates
+        // Runs daily at 2:00 AM
+        $schedule->command('events:import --update-all-matching')
             ->dailyAt('02:00')
             ->withoutOverlapping()
             ->runInBackground()
             ->appendOutputTo(storage_path('logs/events-import.log'));
 
-        // Alternative: Run every 6 hours
-        // $schedule->command('events:import')
-        //     ->everySixHours()
-        //     ->withoutOverlapping()
-        //     ->runInBackground();
+        // Second: Import new events (runs after update-all-matching completes)
+        // Runs daily at 2:30 AM to allow time for the first command to finish
+        $schedule->command('events:import')
+            ->dailyAt('02:30')
+            ->withoutOverlapping()
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/events-import.log'));
     }
 
 
