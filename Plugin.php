@@ -47,7 +47,7 @@ class Plugin extends PluginBase
      */
     public function registerSchedule($schedule)
     {
-        // First: Update all fields for existing entries that match by title and dates
+        // First: Update all fields for existing entries matching by global_id
         // Runs daily at 2:00 AM
         $schedule->command('events:import --update-all-matching')
             ->dailyAt('02:00')
@@ -149,6 +149,10 @@ class Plugin extends PluginBase
             'email' => function ($table) {
                 $table->string('email')->nullable();
             },
+            'global_id' => function ($table) use ($tableName) {
+                $table->string('global_id')->nullable();
+                $table->index('global_id', $tableName . '_global_id_index');
+            },
         ];
 
         // Drop old 'country' string column if exists
@@ -163,6 +167,13 @@ class Plugin extends PluginBase
                 \Schema::table($tableName, $callback);
             }
         }
+
+        // Backfill global_id from identifier for existing imported entries
+        \Db::table($tableName)
+            ->whereNotNull('identifier')
+            ->where('identifier', '!=', '')
+            ->whereNull('global_id')
+            ->update(['global_id' => \Db::raw('"identifier"')]);
     }
 
     /**
@@ -190,6 +201,7 @@ class Plugin extends PluginBase
                 'tags',
                 'contact',
                 'email',
+                'global_id',
             ];
 
             if (method_exists($model, 'addFillable')) {
@@ -212,7 +224,8 @@ class Plugin extends PluginBase
                 $nullableFields = [
                     'institution', 'target', 'theme', 'format', 'fee',
                     'remarks', 'tags', 'contact', 'email',
-                    'meta_keywords', 'meta_description', 'meta_title'
+                    'meta_keywords', 'meta_description', 'meta_title',
+                    'global_id',
                 ];
                 foreach ($nullableFields as $field) {
                     if (isset($model->{$field}) && $model->{$field} === '') {
@@ -342,6 +355,14 @@ class Plugin extends PluginBase
                     'type'  => 'text',
                     'tab'   => 'Additional fields',
                 ],
+                'global_id' => [
+                    'label'   => 'Global ID',
+                    'span'    => 'left',
+                    'type'    => 'text',
+                    'tab'     => 'Additional fields',
+                    'comment' => 'External API identifier (auto-populated during import)',
+                    'disabled' => true,
+                ],
             ]);
         });
 
@@ -388,9 +409,6 @@ class Plugin extends PluginBase
         });
     }
 
-    /**
-     * Extend Events controller with import actions
-     */
     /**
      * Extend Events controller with import actions
      */
@@ -497,9 +515,6 @@ class Plugin extends PluginBase
     /**
      * Perform the actual import
      */
-    /**
-     * Perform the actual import
-     */
     public static function performImport($filePath, $sheetName = 'Upload sheet', $categoryIds = [], $countryId = null)
     {
         $results = [
@@ -601,10 +616,7 @@ class Plugin extends PluginBase
     }
 
     /**
-     * Check if entry already exists based on title, start, end, place, country
-     */
-    /**
-     * Check if entry already exists based on title, start date, end date, place, country
+     * Check if entry already exists based on title, start date, end date
      * Note: Only compares date portion of start/end timestamps, not the time
      */
     protected static function isDuplicateEntry($eventData)
@@ -633,20 +645,6 @@ class Plugin extends PluginBase
         } else {
             $query->whereNull('end');
         }
-
-        // Check place
-//        if (!empty($eventData['place'])) {
-//            $query->where('place', $eventData['place']);
-//        } else {
-//            $query->whereNull('place');
-//        }
-
-//        // Check country_id
-//        if (!empty($eventData['country_id'])) {
-//            $query->where('country_id', $eventData['country_id']);
-//        } else {
-//            $query->whereNull('country_id');
-//        }
 
         return $query->exists();
     }

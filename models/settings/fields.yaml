@@ -34,16 +34,16 @@ fields:
         mode: info
         label: Command Line Usage
         comment: |
-            # Normal import (insert new, update by identifier)
+            # Normal import (insert new, update existing by global_id)
             <code>php artisan events:import</code>
 
-            # Populate only missing fields for existing entries (by identifier)
+            # Populate only missing fields for existing entries (matched by global_id)
             <code>php artisan events:import --populate-missing</code>
 
-            # Update non-key fields for entries matching by title+dates
+            # Update non-key fields for entries matching by global_id
             <code>php artisan events:import --update-matching</code>
 
-            # Update ALL fields for entries matching by title+dates (including replacing images)
+            # Update ALL fields for entries matching by global_id (including replacing images)
             <code>php artisan events:import --update-all-matching</code>
 
             # Add --dry-run to any command to preview without saving

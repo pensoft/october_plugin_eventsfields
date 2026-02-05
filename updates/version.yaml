@@ -22,3 +22,5 @@
     - "Fix events filter to serch in the keywords; Update events via API daily"
 1.0.12:
     - "Fix schedule"
+1.0.13:
+    - "Fix API update/insert match by global_id; delete old images from disk on update"

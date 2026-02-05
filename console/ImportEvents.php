@@ -27,8 +27,8 @@ class ImportEvents extends Command
                             {--url= : API URL to fetch JSON from (overrides config)}
                             {--dry-run : Preview import without saving}
                             {--populate-missing : Populate missing data for existing entries}
-                            {--update-matching : Update entries where title, start and end dates match}
-                            {--update-all-matching : Update ALL fields for entries matching by title and dates}';
+                            {--update-matching : Update entries matching by global_id (identifier)}
+                            {--update-all-matching : Update ALL fields for entries matching by global_id (identifier)}';
 
     /**
      * @var string Table name
@@ -165,8 +165,8 @@ class ImportEvents extends Command
                 // Transform item to entry
                 $entry = $this->transformItem($item, $uniqueId);
 
-                // Check for duplicate based on title and dates (ignoring time)
-                if ($this->isDuplicate($entry['title'], $entry['start'], $entry['end'])) {
+                // Check for duplicate based on global_id
+                if ($this->isDuplicate($uniqueId)) {
                     $stats['duplicates']++;
                     continue;
                 }
@@ -176,17 +176,24 @@ class ImportEvents extends Command
                     continue;
                 }
 
-                // Check if exists by identifier (for updates) - include soft-deleted
+                // Check if exists by global_id (for updates) - include soft-deleted
                 $existing = Db::table($this->table)
-                    ->where('identifier', $uniqueId)
+                    ->where('global_id', $uniqueId)
                     ->first();
+
+                // Fallback: check by identifier for backwards compatibility
+                if (!$existing) {
+                    $existing = Db::table($this->table)
+                        ->where('identifier', $uniqueId)
+                        ->first();
+                }
 
                 if ($existing) {
                     // Update
                     $entry['updated_at'] = Carbon::now();
                     $entry['deleted_at'] = null;
                     Db::table($this->table)
-                        ->where('identifier', $uniqueId)
+                        ->where('id', $existing->id)
                         ->update($entry);
                     $stats['updated']++;
 
@@ -250,32 +257,23 @@ class ImportEvents extends Command
     }
 
     /**
-     * Check if an event with the same title and dates already exists
-     * Compares dates only (ignores time component)
+     * Check if an event with the same global_id already exists
      */
-    protected function isDuplicate(string $title, ?string $start, ?string $end): bool
+    protected function isDuplicate(string $globalId): bool
     {
-        $query = Db::table($this->table)
-            ->where('title', $title);
+        // Check by global_id column
+        $exists = Db::table($this->table)
+            ->where('global_id', $globalId)
+            ->exists();
 
-        // Compare start date (date only, ignore time)
-        if ($start) {
-            $startDate = Carbon::parse($start)->format('Y-m-d');
-            $query->whereRaw('DATE("start") = ?', [$startDate]);
-        } else {
-            $query->whereNull('start');
+        if ($exists) {
+            return true;
         }
 
-        // Compare end date (date only, ignore time)
-        // Note: "end" is a reserved keyword in PostgreSQL, must be quoted
-        if ($end) {
-            $endDate = Carbon::parse($end)->format('Y-m-d');
-            $query->whereRaw('DATE("end") = ?', [$endDate]);
-        } else {
-            $query->whereNull('end');
-        }
-
-        return $query->exists();
+        // Fallback: check by identifier for backwards compatibility
+        return Db::table($this->table)
+            ->where('identifier', $globalId)
+            ->exists();
     }
 
     /**
@@ -381,6 +379,7 @@ class ImportEvents extends Command
         return [
             'title' => mb_substr($item['title'] ?? '', 0, 255),
             'slug' => $slug,
+            'global_id' => $uniqueId,
             'identifier' => $uniqueId,
             'start' => $start,
             'end' => $end,
@@ -1053,6 +1052,9 @@ class ImportEvents extends Command
             $file->is_public = true;
             $file->save();
 
+            // Fix file permissions so web server can generate thumbnails
+            $this->fixUploadPermissions($file);
+
             // Clean up temp file
             if (file_exists($tempPath)) {
                 unlink($tempPath);
@@ -1071,12 +1073,112 @@ class ImportEvents extends Command
     }
 
     /**
-     * Handle update matching mode - update entries where title, start and end dates match
+     * Fix file permissions for uploaded files so the web server can generate thumbnails.
+     * When cron runs as root and the web server runs as www-data, uploaded files
+     * may have wrong ownership/permissions, causing thumbnail generation to fail.
+     */
+    protected function fixUploadPermissions(File $file): void
+    {
+        try {
+            $diskPath = $file->getDiskPath();
+            $uploadsPath = storage_path('app/uploads/public');
+
+            // Get the directory where the file was saved
+            $filePath = $uploadsPath . '/' . $diskPath;
+
+            if (file_exists($filePath)) {
+                // Make file readable/writable by owner and group
+                chmod($filePath, 0664);
+
+                // Fix directory permissions up the chain
+                $dir = dirname($filePath);
+                for ($i = 0; $i < 3; $i++) {
+                    if ($dir && is_dir($dir) && strpos($dir, $uploadsPath) === 0) {
+                        chmod($dir, 0775);
+                        $dir = dirname($dir);
+                    }
+                }
+
+                // Try to change ownership to www-data (web server user)
+                // This may fail if not running as root, which is fine
+                @chown($filePath, 'www-data');
+                @chgrp($filePath, 'www-data');
+            }
+        } catch (\Exception $e) {
+            Log::warning('Events Import: Could not fix file permissions', [
+                'file_id' => $file->id,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Delete existing cover image(s) for an entry from both database and disk storage.
+     * Uses the File model's delete() method to ensure physical files are removed.
+     */
+    protected function deleteCoverImage(int $entryId): bool
+    {
+        $existingImages = Db::table('system_files')
+            ->where('attachment_type', 'Pensoft\Calendar\Models\Entry')
+            ->where('attachment_id', $entryId)
+            ->where('field', 'cover_image')
+            ->get();
+
+        if ($existingImages->isEmpty()) {
+            return false;
+        }
+
+        foreach ($existingImages as $imageRecord) {
+            try {
+                // Load the File model so it deletes the physical file on delete
+                $file = File::find($imageRecord->id);
+                if ($file) {
+                    $file->delete();
+                } else {
+                    // Fallback: remove DB record if model not found
+                    Db::table('system_files')->where('id', $imageRecord->id)->delete();
+                }
+            } catch (\Exception $e) {
+                Log::warning('Events Import: Failed to delete cover image file', [
+                    'file_id' => $imageRecord->id,
+                    'entry_id' => $entryId,
+                    'error' => $e->getMessage()
+                ]);
+                // Still remove the DB record as fallback
+                Db::table('system_files')->where('id', $imageRecord->id)->delete();
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Find entry matching by global_id, with fallback to identifier
+     */
+    protected function findMatchingEntryByGlobalId(string $globalId)
+    {
+        // Primary: match by global_id column
+        $entry = Db::table($this->table)
+            ->where('global_id', $globalId)
+            ->first();
+
+        if ($entry) {
+            return $entry;
+        }
+
+        // Fallback: match by identifier column (backwards compatibility)
+        return Db::table($this->table)
+            ->where('identifier', $globalId)
+            ->first();
+    }
+
+    /**
+     * Handle update matching mode - update entries matching by global_id
      * Updates only non-key fields (keeps title, start, end, slug unchanged)
      */
     protected function handleUpdateMatching(string $url, bool $dryRun): int
     {
-        $this->info("Starting update matching entries...");
+        $this->info("Starting update matching entries (by global_id)...");
         $this->info("API URL: {$url}");
 
         // Fetch JSON from API
@@ -1135,16 +1237,16 @@ class ImportEvents extends Command
                     continue;
                 }
 
-                // Transform to get the data we need
-                $entry = $this->transformItem($item, $globalId);
-
-                // Find matching entry by title and dates (ignoring time)
-                $matchingEntry = $this->findMatchingEntry($entry['title'], $entry['start'], $entry['end']);
+                // Find matching entry by global_id
+                $matchingEntry = $this->findMatchingEntryByGlobalId($globalId);
 
                 if (!$matchingEntry) {
                     $stats['not_found']++;
                     continue;
                 }
+
+                // Transform to get the data we need
+                $entry = $this->transformItem($item, $globalId);
 
                 if ($dryRun) {
                     $stats['updated']++;
@@ -1153,6 +1255,8 @@ class ImportEvents extends Command
 
                 // Prepare update data (all fields except title, start, end, slug)
                 $updateData = [
+                    'global_id' => $globalId,
+                    'identifier' => $globalId,
                     'description' => $entry['description'],
                     'url' => $entry['url'],
                     'place' => $entry['place'],
@@ -1169,7 +1273,6 @@ class ImportEvents extends Command
                     'meta_description' => $entry['meta_description'],
                     'meta_keywords' => $entry['meta_keywords'],
                     'source' => $entry['source'],
-                    'identifier' => $globalId,
                     'updated_at' => Carbon::now(),
                     'deleted_at' => null,
                 ];
@@ -1221,12 +1324,12 @@ class ImportEvents extends Command
     }
 
     /**
-     * Handle update ALL fields for matching entries (by title and dates)
+     * Handle update ALL fields for matching entries (by global_id)
      * Updates ALL fields including title, start, end, slug, and replaces cover image
      */
     protected function handleUpdateAllMatching(string $url, bool $dryRun): int
     {
-        $this->info("Starting update ALL fields for matching entries...");
+        $this->info("Starting update ALL fields for matching entries (by global_id)...");
         $this->info("API URL: {$url}");
 
         // Fetch JSON from API
@@ -1285,16 +1388,16 @@ class ImportEvents extends Command
                     continue;
                 }
 
-                // Transform to get the data we need
-                $entry = $this->transformItem($item, $globalId);
-
-                // Find matching entry by title and dates (ignoring time)
-                $matchingEntry = $this->findMatchingEntry($entry['title'], $entry['start'], $entry['end']);
+                // Find matching entry by global_id
+                $matchingEntry = $this->findMatchingEntryByGlobalId($globalId);
 
                 if (!$matchingEntry) {
                     $stats['not_found']++;
                     continue;
                 }
+
+                // Transform to get the data we need
+                $entry = $this->transformItem($item, $globalId);
 
                 if ($dryRun) {
                     $stats['updated']++;
@@ -1305,6 +1408,7 @@ class ImportEvents extends Command
                 $updateData = [
                     'title' => $entry['title'],
                     'slug' => $entry['slug'],
+                    'global_id' => $globalId,
                     'identifier' => $globalId,
                     'start' => $entry['start'],
                     'end' => $entry['end'],
@@ -1337,12 +1441,8 @@ class ImportEvents extends Command
                     ->where('id', $matchingEntry->id)
                     ->update($updateData);
 
-                // Delete existing cover image and upload new one
-                Db::table('system_files')
-                    ->where('attachment_type', 'Pensoft\Calendar\Models\Entry')
-                    ->where('attachment_id', $matchingEntry->id)
-                    ->where('field', 'cover_image')
-                    ->delete();
+                // Delete existing cover image (from DB and disk) and upload new one
+                $this->deleteCoverImage($matchingEntry->id);
 
                 $this->uploadCoverImage($matchingEntry->id, $item, true);
 
@@ -1382,33 +1482,6 @@ class ImportEvents extends Command
         Log::info('Events Import: Update all matching completed', $stats);
 
         return 0;
-    }
-
-    /**
-     * Find entry matching by title, start date and end date (ignoring time)
-     */
-    protected function findMatchingEntry(string $title, ?string $start, ?string $end)
-    {
-        $query = Db::table($this->table)
-            ->where('title', $title);
-
-        // Compare start date (date only, ignore time)
-        if ($start) {
-            $startDate = Carbon::parse($start)->format('Y-m-d');
-            $query->whereRaw('DATE("start") = ?', [$startDate]);
-        } else {
-            $query->whereNull('start');
-        }
-
-        // Compare end date (date only, ignore time)
-        if ($end) {
-            $endDate = Carbon::parse($end)->format('Y-m-d');
-            $query->whereRaw('DATE("end") = ?', [$endDate]);
-        } else {
-            $query->whereNull('end');
-        }
-
-        return $query->first();
     }
 
     /**
@@ -1461,10 +1534,13 @@ class ImportEvents extends Command
 
         $this->info("Found " . count($apiItems) . " unique items in API");
 
-        // Get all existing imported entries
+        // Get all existing imported entries (check both global_id and identifier)
         $existingEntries = Db::table($this->table)
             ->where('is_internal', false)
-            ->whereNotNull('identifier')
+            ->where(function ($query) {
+                $query->whereNotNull('global_id')
+                    ->orWhereNotNull('identifier');
+            })
             ->get();
 
         $this->info("Found " . count($existingEntries) . " existing imported entries");
@@ -1490,20 +1566,33 @@ class ImportEvents extends Command
             $progressBar->advance();
 
             try {
-                // Extract global_id from identifier (remove any suffix)
-                $globalId = $entry->identifier;
-                if (strpos($globalId, '_') !== false) {
-                    $globalId = explode('_', $globalId)[0];
+                // Use global_id if available, otherwise fall back to identifier
+                $globalId = $entry->global_id ?? $entry->identifier;
+
+                if (empty($globalId)) {
+                    $stats['skipped']++;
+                    continue;
+                }
+
+                // Strip any suffix from identifier for backwards compatibility
+                $lookupId = $globalId;
+                if (strpos($lookupId, '_') !== false) {
+                    $lookupId = explode('_', $lookupId)[0];
                 }
 
                 // Find matching API item
-                if (!isset($apiItems[$globalId])) {
+                if (!isset($apiItems[$lookupId])) {
                     $stats['not_found']++;
                     continue;
                 }
 
-                $item = $apiItems[$globalId];
+                $item = $apiItems[$lookupId];
                 $updates = [];
+
+                // Always ensure global_id is set
+                if (empty($entry->global_id)) {
+                    $updates['global_id'] = $lookupId;
+                }
 
                 // Check and populate missing cover image
                 $hasCoverImage = Db::table('system_files')
