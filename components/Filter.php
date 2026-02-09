@@ -89,7 +89,7 @@ class Filter extends ComponentBase
 
         $query->where('show_on_timeline', false);
         $query->where('is_internal', false);
-        $query->where('end', '>', Carbon::now());
+//        $query->where('end', '>', Carbon::now());
 
         if ($filters['sortCategory']) {
             $query->byCategory($filters['sortCategory']);
@@ -101,14 +101,22 @@ class Filter extends ComponentBase
 
         if ($filters['sortTarget']) {
             $query->where('target', 'ilike', "%{$filters['sortTarget']}%");
-            $query->orWhere('tags', 'ILIKE', "%{$filters['sortTarget']}%");
-            $query->orWhere('meta_keywords', 'ILIKE', "%{$filters['sortTarget']}%");
+            $tags = \Db::table('christophheich_calendar_entries')->where('tags', 'ILIKE', "%{$filters['sortTarget']}%");
+            $meta_keywords = \Db::table('christophheich_calendar_entries')->where('meta_keywords', 'ILIKE', "%{$filters['sortTarget']}%");
+            $query->union($tags);
+            $query->union($meta_keywords);
+//            $query->orWhere('tags', 'ILIKE', "%{$filters['sortTarget']}%");
+//            $query->orWhere('meta_keywords', 'ILIKE', "%{$filters['sortTarget']}%");
         }
 
         if ($filters['sortTheme']) {
             $query->where('theme', 'ilike', "%{$filters['sortTheme']}%");
-            $query->orWhere('tags', 'ILIKE', "%{$filters['sortTheme']}%");
-            $query->orWhere('meta_keywords', 'ILIKE', "%{$filters['sortTheme']}%");
+            $tags = \Db::table('christophheich_calendar_entries')->where('tags', 'ILIKE', "%{$filters['sortTheme']}%");
+            $meta_keywords = \Db::table('christophheich_calendar_entries')->where('meta_keywords', 'ILIKE', "%{$filters['sortTheme']}%");
+            $query->union($tags);
+            $query->union($meta_keywords);
+//            $query->where('tags', 'ILIKE', "%{$filters['sortTheme']}%");
+//            $query->orWhere('meta_keywords', 'ILIKE', "%{$filters['sortTheme']}%");
         }
 
         if ($filters['dateFrom']) {
@@ -129,13 +137,26 @@ class Filter extends ComponentBase
         $query = Entry::query();
         $this->applyFilters($query, $filters);
 
-        // Filter for short-term events (< 8 days duration or no end date)
-        $query->where(function ($q) {
-            $q->whereNull('end')
-                ->orWhereRaw('("end"::date - "start"::date) < 8');
+        // Get all results first, then filter for short-term events (< 8 days duration or no end date)
+        $filtered = $query->get()->filter(function ($item) {
+            if (is_null($item->end)) {
+                return true;
+            }
+            return Carbon::parse($item->start)->diffInDays(Carbon::parse($item->end)) < 8;
         });
 
-        return $query->paginate(10, $page);
+        // Manual pagination
+        $perPage = 10;
+        $currentPage = $page ?: 1;
+        $pagedData = $filtered->slice(($currentPage - 1) * $perPage, $perPage)->values();
+
+        return new \Illuminate\Pagination\LengthAwarePaginator(
+            $pagedData,
+            $filtered->count(),
+            $perPage,
+            $currentPage,
+            ['path' => request()->url(), 'query' => request()->query()]
+        );
     }
 
     protected function searchOngoingRecords($filters, $page = 1)

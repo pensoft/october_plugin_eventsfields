@@ -30,7 +30,8 @@ class Settings extends Model
      * @var array Validation rules
      */
     public $rules = [
-        'api_url' => 'required|url'
+        'api_url' => 'required|url',
+        'split_api_url' => 'required|url',
     ];
 
     /**
@@ -39,7 +40,9 @@ class Settings extends Model
     public function initSettingsData()
     {
         $this->api_url = '';
+        $this->split_api_url = '';
         $this->import_enabled = true;
+        $this->split_import_enabled = true;
         $this->import_schedule = 'daily';
     }
 }

@@ -24,3 +24,5 @@
     - "Fix schedule"
 1.0.13:
     - "Fix API update/insert match by global_id; delete old images from disk on update"
+1.0.14:
+    - "SPLIT API and fixed filter"

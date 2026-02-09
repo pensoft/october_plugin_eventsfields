@@ -1,6 +1,6 @@
 fields:
     api_url:
-        label: API URL
+        label: KIEL API URL
         comment: The external API endpoint URL for fetching events
         span: full
         type: textarea
@@ -11,6 +11,19 @@ fields:
         comment: Turn on/off the scheduled automatic import
         span: left
         type: switch
+        default: true
+
+    split_api_url:
+        label: SPLIT API URL
+        type: textarea
+        span: full
+        comment: URL to fetch events JSON from (Split.hr)
+
+    split_import_enabled:
+        label: Enable Split.hr automatic import
+        comment: Turn on/off the scheduled automatic import
+        type: switch
+        span: auto
         default: true
 
     import_schedule:
@@ -48,3 +61,18 @@ fields:
 
             # Add --dry-run to any command to preview without saving
             <code>php artisan events:import --update-all-matching --dry-run</code>
+
+            # SPLIT Normal import
+            php artisan events:import-split --url="https://split.hr/api/events"
+
+            # Dry run (preview without saving)
+            php artisan events:import-split --url="https://split.hr/api/events" --dry-run
+
+            # Update non-key fields for existing entries
+            php artisan events:import-split --url="https://split.hr/api/events" --update-matching
+
+            # Update ALL fields for existing entries (including title, dates, cover image)
+            php artisan events:import-split --url="https://split.hr/api/events" --update-all-matching
+
+            # Populate only missing fields
+            php artisan events:import-split --url="https://split.hr/api/events" --populate-missing

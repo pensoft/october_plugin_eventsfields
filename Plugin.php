@@ -40,6 +40,7 @@ class Plugin extends PluginBase
     {
         // Register console commands
         $this->registerConsoleCommand('events.import', \Pensoft\Eventsfields\Console\ImportEvents::class);
+        $this->registerConsoleCommand('events.import-split', \Pensoft\Eventsfields\Console\ImportSplitEvents::class);
     }
 
     /**
@@ -47,6 +48,7 @@ class Plugin extends PluginBase
      */
     public function registerSchedule($schedule)
     {
+        //KIEL
         // First: Update all fields for existing entries matching by global_id
         // Runs daily at 2:00 AM
         $schedule->command('events:import --update-all-matching')
@@ -62,6 +64,24 @@ class Plugin extends PluginBase
             ->withoutOverlapping()
             ->runInBackground()
             ->appendOutputTo(storage_path('logs/events-import.log'));
+
+        //SPLIT
+        // First: Update all fields for existing entries matching by global_id
+        // Runs daily at 3:00 AM
+        $schedule->command('events:import-split --update-all-matching')
+            ->dailyAt('03:00')
+            ->withoutOverlapping()
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/events-import.log'));
+
+        // Second: Import new events (runs after update-all-matching completes)
+        // Runs daily at 3:30 AM to allow time for the first command to finish
+        $schedule->command('events:import-split')
+            ->dailyAt('03:30')
+            ->withoutOverlapping()
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/events-import.log'));
+
     }
 
 
