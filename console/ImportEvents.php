@@ -727,6 +727,7 @@ class ImportEvents extends Command
             'children' => 'Children (0-16 y)',
             'kids' => 'Children (0-16 y)',
             'child' => 'Children (0-16 y)',
+            'children' => 'Children (0-16 y)',
 
             // Young people / Teenagers
             'target group teenager' => 'Young people (16-26 y)',
@@ -776,6 +777,7 @@ class ImportEvents extends Command
             'politician' => 'Policy makers',
             'politicians' => 'Policy makers',
             'government' => 'Policy makers',
+            'politics' => 'Policy makers',
 
             // Early career researchers
             'target group early career researchers' => 'Early career researchers',
@@ -789,6 +791,7 @@ class ImportEvents extends Command
             // All researchers
             'target group researchers' => 'All researchers',
             'target group scientists' => 'All researchers',
+            'research' => 'All researchers',
             'researcher' => 'All researchers',
             'researchers' => 'All researchers',
             'scientist' => 'All researchers',
@@ -887,6 +890,7 @@ class ImportEvents extends Command
 
             // Health and well-being
             'health' => 'Health and well-being',
+            'well' => 'Health and well-being',
             'well-being' => 'Health and well-being',
             'wellbeing' => 'Health and well-being',
             'medicine' => 'Health and well-being',
@@ -904,6 +908,7 @@ class ImportEvents extends Command
             'skills' => 'Talents',
             'training' => 'Talents',
             'career' => 'Talents',
+            'research' => 'Talents',
         ];
 
         $mappedFocuses = [];

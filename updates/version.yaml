@@ -26,3 +26,5 @@
     - "Fix API update/insert match by global_id; delete old images from disk on update"
 1.0.14:
     - "SPLIT API and fixed filter"
+1.0.15:
+    - "Fixed filter target and Theme; Fixed import via API target and theme maping"

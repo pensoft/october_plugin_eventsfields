@@ -100,9 +100,9 @@ class Filter extends ComponentBase
         }
 
         if ($filters['sortTarget']) {
-            $query->where('target', 'ilike', "%{$filters['sortTarget']}%");
-            $tags = \Db::table('christophheich_calendar_entries')->where('tags', 'ILIKE', "%{$filters['sortTarget']}%");
-            $meta_keywords = \Db::table('christophheich_calendar_entries')->where('meta_keywords', 'ILIKE', "%{$filters['sortTarget']}%");
+            $query->where('target', 'ilike', "{$filters['sortTarget']}%");
+            $tags = \Db::table('christophheich_calendar_entries')->where('tags', 'ILIKE', "{$filters['sortTarget']}%");
+            $meta_keywords = \Db::table('christophheich_calendar_entries')->where('meta_keywords', 'ILIKE', "{$filters['sortTarget']}%");
             $query->union($tags);
             $query->union($meta_keywords);
 //            $query->orWhere('tags', 'ILIKE', "%{$filters['sortTarget']}%");
@@ -110,9 +110,9 @@ class Filter extends ComponentBase
         }
 
         if ($filters['sortTheme']) {
-            $query->where('theme', 'ilike', "%{$filters['sortTheme']}%");
-            $tags = \Db::table('christophheich_calendar_entries')->where('tags', 'ILIKE', "%{$filters['sortTheme']}%");
-            $meta_keywords = \Db::table('christophheich_calendar_entries')->where('meta_keywords', 'ILIKE', "%{$filters['sortTheme']}%");
+            $query->where('theme', 'ilike', "{$filters['sortTheme']}%");
+            $tags = \Db::table('christophheich_calendar_entries')->where('tags', 'ILIKE', "{$filters['sortTheme']}%");
+            $meta_keywords = \Db::table('christophheich_calendar_entries')->where('meta_keywords', 'ILIKE', "{$filters['sortTheme']}%");
             $query->union($tags);
             $query->union($meta_keywords);
 //            $query->where('tags', 'ILIKE', "%{$filters['sortTheme']}%");
