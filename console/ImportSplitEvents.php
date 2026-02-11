@@ -102,7 +102,6 @@ class ImportSplitEvents extends Command
             'inserted' => 0,
             'updated' => 0,
             'skipped' => 0,
-            'duplicates' => 0,
             'errors' => 0,
         ];
 
@@ -134,24 +133,20 @@ class ImportSplitEvents extends Command
                 // Transform item to entry
                 $entry = $this->transformItem($item, $uniqueId);
 
-                // Check for duplicate based on global_id
-                if ($this->isDuplicate($uniqueId)) {
-                    $stats['duplicates']++;
-                    continue;
-                }
-
-                if ($dryRun) {
-                    $stats['inserted']++;
-                    continue;
-                }
-
                 // Check if exists by global_id (for updates) - include soft-deleted
                 $existing = $this->findMatchingEntryByGlobalId($uniqueId);
 
                 if ($existing) {
-                    // Update
+                    // Entry already exists – update it
+                    if ($dryRun) {
+                        $stats['updated']++;
+                        continue;
+                    }
+
                     $entry['updated_at'] = Carbon::now();
                     $entry['deleted_at'] = null;
+                    unset($entry['created_at']);
+
                     Db::table($this->table)
                         ->where('id', $existing->id)
                         ->update($entry);
@@ -163,7 +158,12 @@ class ImportSplitEvents extends Command
                     // Attach default category if not already attached
                     $this->attachDefaultCategory($existing->id);
                 } else {
-                    // Insert
+                    // New entry – insert
+                    if ($dryRun) {
+                        $stats['inserted']++;
+                        continue;
+                    }
+
                     $entry['created_at'] = Carbon::now();
                     $entry['updated_at'] = Carbon::now();
                     $entry['deleted_at'] = null;
@@ -197,14 +197,13 @@ class ImportSplitEvents extends Command
         $this->output->writeln('');
 
         // Summary
-        $this->info("Import completed!");
+        $this->info("Import completed!" . ($dryRun ? ' (DRY RUN)' : ''));
         $this->table(
             ['Metric', 'Count'],
             [
                 ['Inserted', $stats['inserted']],
                 ['Updated', $stats['updated']],
                 ['Skipped', $stats['skipped']],
-                ['Duplicates', $stats['duplicates']],
                 ['Errors', $stats['errors']],
                 ['Unique events', count($processedIdentifiers)],
             ]
@@ -394,24 +393,55 @@ class ImportSplitEvents extends Command
         // ── Author / contact ──────────────────────────────────────────
         $author = $item['author'] ?? null;
 
-        // ── Categories / themes ─────────────────────────────────────────
+        // ── Extract customFieldList values ──────────────────────────────
+        $customFields = $this->extractCustomFields($item['customFieldList'] ?? []);
+
+        // ── Categories ──────────────────────────────────────────────────
         $categoryNames = [];
         foreach ($item['articleCategories'] ?? [] as $cat) {
             if (!empty($cat['name'])) {
                 $categoryNames[] = $cat['name'];
             }
         }
-        $mappedThemes = $this->mapThematicFocuses($categoryNames, []);
-        $theme = !empty($mappedThemes) ? implode(', ', $mappedThemes) : null;
+
+        // ── Themes: prefer customFieldList, fall back to mapping ────────
+        if (!empty($customFields['Theme'])) {
+            $theme = $customFields['Theme'];
+        } else {
+            $mappedThemes = $this->mapThematicFocuses($categoryNames, []);
+            $theme = !empty($mappedThemes) ? implode(', ', $mappedThemes) : null;
+        }
 
         // ── Tags ────────────────────────────────────────────────────────
         $tags = !empty($categoryNames) ? implode(', ', $categoryNames) : null;
 
-        // ── Target groups ───────────────────────────────────────────────
-        // Try to extract from description + categories
-        $targetTerms = array_merge($categoryNames, $this->extractTargetHints($description));
-        $targetGroups = $this->mapTargetGroups($targetTerms, []);
-        $target = !empty($targetGroups) ? implode(', ', $targetGroups) : null;
+        // ── Target groups: prefer customFieldList, fall back to mapping ─
+        if (!empty($customFields['Target groups'])) {
+            $target = $customFields['Target groups'];
+        } else {
+            $targetTerms = array_merge($categoryNames, $this->extractTargetHints($description));
+            $targetGroups = $this->mapTargetGroups($targetTerms, []);
+            $target = !empty($targetGroups) ? implode(', ', $targetGroups) : null;
+        }
+
+        // ── Extract contact info from articleText HTML ──────────────────
+        $decodedText = $this->decodeHtmlField($item['articleText'] ?? null);
+        $parsedContact = $this->parseContactFromHtml($decodedText);
+
+        // Use parsed email if available, otherwise null
+        $email = $parsedContact['email'];
+
+        // Use parsed contact person if available, fall back to author
+        $contact = $parsedContact['contact'] ?? $author;
+        if (empty($contact)) {
+            $contact = $author;
+        }
+
+        // Use parsed place if available
+        $place = $parsedContact['place'];
+
+        // Use parsed institution if available
+        $institution = $parsedContact['institution'];
 
         // ── Slug ────────────────────────────────────────────────────────
         $slug = $this->generateUniqueSlug($item['title'], $uniqueId);
@@ -429,13 +459,13 @@ class ImportSplitEvents extends Command
             'all_day'          => $allDay,
             'description'      => $description,
             'url'              => $url ? mb_substr($url, 0, 255) : null,
-            'place'            => null, // Not provided in this API
+            'place'            => $place ? mb_substr($place, 0, 255) : null,
             'country_id'       => $countryId,
-            'institution'      => null,
-            'contact'          => $author ? mb_substr($author, 0, 255) : null,
-            'email'            => null,
+            'institution'      => $institution ? mb_substr($institution, 0, 255) : null,
+            'contact'          => $contact ? mb_substr($contact, 0, 255) : null,
+            'email'            => $email ? mb_substr($email, 0, 255) : null,
             'theme'            => $theme ? mb_substr($theme, 0, 255) : null,
-            'format'           => null,
+            'format'           => $parsedContact['format'] ? mb_substr($parsedContact['format'], 0, 255) : null,
             'target'           => $target ? mb_substr($target, 0, 255) : null,
             'tags'             => $tags ? mb_substr($tags, 0, 255) : null,
             'fee'              => null,
@@ -460,25 +490,6 @@ class ImportSplitEvents extends Command
     protected function buildGlobalId($articleId): string
     {
         return 'split-' . $articleId;
-    }
-
-    /**
-     * Check if an event with the same global_id already exists
-     */
-    protected function isDuplicate(string $globalId): bool
-    {
-        $exists = Db::table($this->table)
-            ->where('global_id', $globalId)
-            ->exists();
-
-        if ($exists) {
-            return true;
-        }
-
-        // Fallback: check by identifier
-        return Db::table($this->table)
-            ->where('identifier', $globalId)
-            ->exists();
     }
 
     /**
@@ -579,6 +590,110 @@ class ImportSplitEvents extends Command
         } catch (\Exception $e) {
             return null;
         }
+    }
+
+    /**
+     * Extract custom field values from the customFieldList array.
+     * Returns an associative array keyed by field label.
+     */
+    protected function extractCustomFields(array $customFieldList): array
+    {
+        $fields = [];
+        foreach ($customFieldList as $field) {
+            if (!empty($field['label']) && isset($field['value'])) {
+                $label = trim($field['label']);
+                $value = trim($field['value']);
+                if ($value !== '') {
+                    $fields[$label] = $value;
+                }
+            }
+        }
+        return $fields;
+    }
+
+    /**
+     * Parse contact person, email, location, institution, and format
+     * from the decoded articleText HTML.
+     *
+     * The Split API embeds structured info inside the HTML body using
+     * patterns like:
+     *   "Contact person: Name; email@example.com"
+     *   "Location: Some Address"
+     *   "Implementing institution: Name"
+     *   "Format: Talks/panel discussion"
+     */
+    protected function parseContactFromHtml(?string $html): array
+    {
+        $result = [
+            'contact'     => null,
+            'email'       => null,
+            'place'       => null,
+            'institution' => null,
+            'format'      => null,
+        ];
+
+        if (empty($html)) {
+            return $result;
+        }
+
+        // Work with a plain-text version for easier regex matching
+        $text = $this->stripHtml($html);
+
+        if (empty($text)) {
+            return $result;
+        }
+
+        // ── Email ───────────────────────────────────────────────────────
+        // Extract any email address from the text
+        if (preg_match('/[\w.+-]+@[\w-]+\.[\w.]+/', $text, $m)) {
+            $result['email'] = trim($m[0], '.');
+        }
+
+        // ── Contact person ──────────────────────────────────────────────
+        // Pattern: "Contact person: Name; email" or "Contact person: Name"
+        if (preg_match('/Contact\s+person\s*:\s*([^;\n]+)/i', $text, $m)) {
+            $contact = trim($m[1]);
+            // Remove email if it leaked into the contact name
+            $contact = preg_replace('/[\w.+-]+@[\w-]+\.[\w.]+/', '', $contact);
+            $contact = trim($contact, " \t\n\r\0\x0B;,");
+            if (!empty($contact)) {
+                $result['contact'] = $contact;
+            }
+        }
+
+        // ── Location ────────────────────────────────────────────────────
+        // Pattern: "Location: Address text" (may contain link text)
+        if (preg_match('/Location\s*:\s*(.+)/i', $text, $m)) {
+            $place = trim($m[1]);
+            // Clean up – take only until the next labelled field or end of line
+            $place = preg_replace('/(Contact\s+person|Implementing\s+institution|Format)\s*:.*/i', '', $place);
+            $place = trim($place, " \t\n\r\0\x0B;,");
+            if (!empty($place)) {
+                $result['place'] = $place;
+            }
+        }
+
+        // ── Implementing institution ────────────────────────────────────
+        if (preg_match('/Implementing\s+institution\s*:\s*(.+)/i', $text, $m)) {
+            $institution = trim($m[1]);
+            $institution = preg_replace('/(Location|Contact\s+person|Format)\s*:.*/i', '', $institution);
+            $institution = trim($institution, " \t\n\r\0\x0B;,");
+            if (!empty($institution)) {
+                $result['institution'] = $institution;
+            }
+        }
+
+        // ── Format ──────────────────────────────────────────────────────
+        if (preg_match('/Format\s*:\s*(.+)/i', $text, $m)) {
+            $format = trim($m[1]);
+            $format = preg_replace('/(Location|Contact\s+person|Implementing\s+institution)\s*:.*/i', '', $format);
+            $format = trim($format, " \t\n\r\0\x0B;,");
+            if (!empty($format)) {
+                $result['format'] = $format;
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -784,6 +899,8 @@ class ImportSplitEvents extends Command
             'coastal' => 'Sea and water',
             'fisheries' => 'Sea and water',
             'aquatic' => 'Sea and water',
+            'sea & water' => 'Sea and water',
+            'sea and water' => 'Sea and water',
 
             // Europe
             'europe' => 'Europe',
@@ -1384,6 +1501,11 @@ class ImportSplitEvents extends Command
             'urls_updated'          => 0,
             'themes_updated'        => 0,
             'targets_updated'       => 0,
+            'contacts_updated'      => 0,
+            'emails_updated'        => 0,
+            'places_updated'        => 0,
+            'institutions_updated'  => 0,
+            'formats_updated'       => 0,
             'skipped'               => 0,
             'not_found'             => 0,
             'errors'                => 0,
@@ -1489,36 +1611,86 @@ class ImportSplitEvents extends Command
                     }
                 }
 
+                // Extract customFieldList values
+                $customFields = $this->extractCustomFields($item['customFieldList'] ?? []);
+
                 // Theme
                 if (empty($entry->theme)) {
-                    $categoryNames = [];
-                    foreach ($item['articleCategories'] ?? [] as $cat) {
-                        if (!empty($cat['name'])) {
-                            $categoryNames[] = $cat['name'];
-                        }
-                    }
-                    $mappedThemes = $this->mapThematicFocuses($categoryNames, []);
-                    if (!empty($mappedThemes)) {
-                        $updates['theme'] = mb_substr(implode(', ', $mappedThemes), 0, 255);
+                    if (!empty($customFields['Theme'])) {
+                        $updates['theme'] = mb_substr($customFields['Theme'], 0, 255);
                         $stats['themes_updated']++;
+                    } else {
+                        $categoryNames = [];
+                        foreach ($item['articleCategories'] ?? [] as $cat) {
+                            if (!empty($cat['name'])) {
+                                $categoryNames[] = $cat['name'];
+                            }
+                        }
+                        $mappedThemes = $this->mapThematicFocuses($categoryNames, []);
+                        if (!empty($mappedThemes)) {
+                            $updates['theme'] = mb_substr(implode(', ', $mappedThemes), 0, 255);
+                            $stats['themes_updated']++;
+                        }
                     }
                 }
 
                 // Target
                 if (empty($entry->target)) {
-                    $description  = $this->decodeHtmlField($item['articleText'] ?? null);
-                    $targetTerms  = $this->extractTargetHints($description);
-                    $categoryNames = [];
-                    foreach ($item['articleCategories'] ?? [] as $cat) {
-                        if (!empty($cat['name'])) {
-                            $categoryNames[] = $cat['name'];
+                    if (!empty($customFields['Target groups'])) {
+                        $updates['target'] = mb_substr($customFields['Target groups'], 0, 255);
+                        $stats['targets_updated']++;
+                    } else {
+                        $description  = $this->decodeHtmlField($item['articleText'] ?? null);
+                        $targetTerms  = $this->extractTargetHints($description);
+                        $categoryNames = [];
+                        foreach ($item['articleCategories'] ?? [] as $cat) {
+                            if (!empty($cat['name'])) {
+                                $categoryNames[] = $cat['name'];
+                            }
+                        }
+                        $targetGroups = $this->mapTargetGroups(array_merge($categoryNames, $targetTerms), []);
+                        if (!empty($targetGroups)) {
+                            $updates['target'] = mb_substr(implode(', ', $targetGroups), 0, 255);
+                            $stats['targets_updated']++;
                         }
                     }
-                    $targetGroups = $this->mapTargetGroups(array_merge($categoryNames, $targetTerms), []);
-                    if (!empty($targetGroups)) {
-                        $updates['target'] = mb_substr(implode(', ', $targetGroups), 0, 255);
-                        $stats['targets_updated']++;
+                }
+
+                // Parse contact info from articleText
+                $decodedText = $this->decodeHtmlField($item['articleText'] ?? null);
+                $parsedContact = $this->parseContactFromHtml($decodedText);
+
+                // Contact
+                if (empty($entry->contact)) {
+                    $contact = $parsedContact['contact'] ?? ($item['author'] ?? null);
+                    if (!empty($contact)) {
+                        $updates['contact'] = mb_substr($contact, 0, 255);
+                        $stats['contacts_updated']++;
                     }
+                }
+
+                // Email
+                if (empty($entry->email) && !empty($parsedContact['email'])) {
+                    $updates['email'] = mb_substr($parsedContact['email'], 0, 255);
+                    $stats['emails_updated']++;
+                }
+
+                // Place
+                if (empty($entry->place) && !empty($parsedContact['place'])) {
+                    $updates['place'] = mb_substr($parsedContact['place'], 0, 255);
+                    $stats['places_updated']++;
+                }
+
+                // Institution
+                if (empty($entry->institution) && !empty($parsedContact['institution'])) {
+                    $updates['institution'] = mb_substr($parsedContact['institution'], 0, 255);
+                    $stats['institutions_updated']++;
+                }
+
+                // Format
+                if (empty($entry->format) && !empty($parsedContact['format'])) {
+                    $updates['format'] = mb_substr($parsedContact['format'], 0, 255);
+                    $stats['formats_updated']++;
                 }
 
                 // Apply updates
@@ -1560,6 +1732,11 @@ class ImportSplitEvents extends Command
                 ['URLs updated', $stats['urls_updated']],
                 ['Themes updated', $stats['themes_updated']],
                 ['Targets updated', $stats['targets_updated']],
+                ['Contacts updated', $stats['contacts_updated']],
+                ['Emails updated', $stats['emails_updated']],
+                ['Places updated', $stats['places_updated']],
+                ['Institutions updated', $stats['institutions_updated']],
+                ['Formats updated', $stats['formats_updated']],
                 ['Skipped (complete)', $stats['skipped']],
                 ['Not found in API', $stats['not_found']],
                 ['Errors', $stats['errors']],
