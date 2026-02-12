@@ -96,7 +96,12 @@ class Filter extends ComponentBase
         }
 
         if ($filters['sortCountry']) {
-            $query->where('country_id', "{$filters['sortCountry']}");
+            if($filters['sortCountry'] != '111111'){
+                $query->where('country_id', "{$filters['sortCountry']}");
+            }else{
+                $query->whereNotIn('country_id', [58, 78, 85]);
+            }
+
         }
 
         if ($filters['sortTarget']) {

@@ -26,17 +26,6 @@ fields:
         span: auto
         default: true
 
-    import_schedule:
-        label: Import Schedule
-        span: right
-        type: dropdown
-        default: daily
-        options:
-            hourly: Every Hour
-            every_six_hours: Every 6 Hours
-            daily: Daily (2:00 AM)
-            weekly: Weekly (Sunday 2:00 AM)
-
     _section_manual:
         label: Manual Import
         type: section
@@ -47,32 +36,32 @@ fields:
         mode: info
         label: Command Line Usage
         comment: |
-            # Normal import (insert new, update existing by global_id)
+            # KIEL Normal import (insert new, update existing by global_id)
             <code>php artisan events:import</code>
 
-            # Populate only missing fields for existing entries (matched by global_id)
+            # KIEL Populate only missing fields for existing entries (matched by global_id)
             <code>php artisan events:import --populate-missing</code>
 
-            # Update non-key fields for entries matching by global_id
+            # KIEL Update non-key fields for entries matching by global_id
             <code>php artisan events:import --update-matching</code>
 
-            # Update ALL fields for entries matching by global_id (including replacing images)
+            # KIEL Update ALL fields for entries matching by global_id (including replacing images)
             <code>php artisan events:import --update-all-matching</code>
 
-            # Add --dry-run to any command to preview without saving
+            # KIEL Add --dry-run to any command to preview without saving
             <code>php artisan events:import --update-all-matching --dry-run</code>
 
             # SPLIT Normal import
-            php artisan events:import-split --url="https://split.hr/api/events"
+            php artisan events:import-split
 
-            # Dry run (preview without saving)
-            php artisan events:import-split --url="https://split.hr/api/events" --dry-run
+            # SPLIT Dry run (preview without saving)
+            php artisan events:import-split --dry-run
 
-            # Update non-key fields for existing entries
-            php artisan events:import-split --url="https://split.hr/api/events" --update-matching
+            # SPLIT Update non-key fields for existing entries
+            php artisan events:import-split --update-matching
 
-            # Update ALL fields for existing entries (including title, dates, cover image)
-            php artisan events:import-split --url="https://split.hr/api/events" --update-all-matching
+            # SPLIT Update ALL fields for existing entries (including title, dates, cover image)
+            php artisan events:import-split --update-all-matching
 
-            # Populate only missing fields
-            php artisan events:import-split --url="https://split.hr/api/events" --populate-missing
+            # SPLIT Populate only missing fields
+            php artisan events:import-split --populate-missing

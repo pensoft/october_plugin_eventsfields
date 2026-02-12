@@ -30,3 +30,5 @@
     - "Fixed filter target and Theme; Fixed import via API target and theme maping"
 1.0.16:
     - "Split events fixed theme and target"
+1.0.17:
+    - "Filter changes"
