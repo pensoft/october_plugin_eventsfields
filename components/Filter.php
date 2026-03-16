@@ -132,6 +132,16 @@ class Filter extends ComponentBase
             $query->where('end', '<=', Carbon::parse($filters['dateTo']));
         }
 
+        // Only hide past events when NO date filter is applied.
+        // If the user sets dateFrom or dateTo, they explicitly want
+        // to browse a date range — so past events are allowed.
+        $hasDateFilter = !empty($filters['dateFrom']) || !empty($filters['dateTo']);
+
+        if (!$hasDateFilter) {
+            // Default: only show events that have not fully ended yet
+            $query->where('end', '>=', Carbon::now());
+        }
+
         $query->orderBy('start', 'asc');
 
         return $query;

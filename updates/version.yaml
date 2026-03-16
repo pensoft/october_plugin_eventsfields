@@ -32,3 +32,5 @@
     - "Split events fixed theme and target"
 1.0.17:
     - "Filter changes"
+1.0.18:
+    - "Filter changes date"
